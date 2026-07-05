@@ -1,5 +1,4 @@
 from datetime import datetime
-import json
 from sqlalchemy import Boolean, DateTime, Float, Integer, String, JSON 
 from sqlalchemy.orm import Mapped, mapped_column
 
