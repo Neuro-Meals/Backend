@@ -4,9 +4,18 @@ from email.message import EmailMessage
 from app.core.config import settings
 
 
-def send_email_otp(to_email: str, otp: str):
+def send_email_otp(to_email: str, otp: str, purpose: str = "verification"):
+    if purpose == "password_reset":
+        subject = "Nutrio Meals Password Reset OTP | رمز إعادة تعيين كلمة المرور"
+        english_title = "Your password reset code is:"
+        arabic_title = "رمز إعادة تعيين كلمة المرور الخاص بك هو:"
+    else:
+        subject = "Nutrio Meals Email Verification OTP | رمز التحقق"
+        english_title = "Your Nutrio Meals verification code is:"
+        arabic_title = "رمز التحقق الخاص بك في Nutrio Meals هو:"
+
     message = EmailMessage()
-    message["Subject"] = "Nutrio Meals Email Verification OTP | رمز التحقق"
+    message["Subject"] = subject
     message["From"] = settings.MAIL_FROM
     message["To"] = to_email
 
@@ -14,7 +23,7 @@ def send_email_otp(to_email: str, otp: str):
         f"""
 Hello,
 
-Your Nutrio Meals verification code is:
+{english_title}
 
 {otp}
 
@@ -29,7 +38,7 @@ Nutrio Meals Team
 
 مرحباً،
 
-رمز التحقق الخاص بك في Nutrio Meals هو:
+{arabic_title}
 
 {otp}
 
