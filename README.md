@@ -72,6 +72,59 @@ nutrio_backend/
 # PHASE 
 
 ```
+Authentication ✅
+
+↓
+
+Roles & Permissions ✅
+
+↓
+
+Meal Categories
+
+↓
+
+Meals
+
+↓
+
+Meal Plans
+
+↓
+
+Customer Profile
+
+↓
+
+Subscriptions
+
+↓
+
+Orders
+
+↓
+
+Deliveries
+
+↓
+
+Payments
+
+↓
+
+Reports
+
+↓
+
+Notifications
+
+↓
+
+Admin Dashboard
+
+```
+
+```
 Phase 1 ✅ (Completed)
 
 Authentication
