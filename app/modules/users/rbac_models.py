@@ -30,7 +30,6 @@ class Permission(Base):
 
     roles = relationship("RolePermission", back_populates="permission", cascade="all, delete-orphan")
 
-
 class UserRoleLink(Base):
     __tablename__ = "user_roles"
 
@@ -43,7 +42,6 @@ class UserRoleLink(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "role_id", name="unique_user_role"),
     )
-
 
 class RolePermission(Base):
     __tablename__ = "role_permissions"
