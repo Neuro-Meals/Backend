@@ -6,6 +6,7 @@ class MealCategoryCreate(BaseModel):
     name_en: str = Field(..., min_length=2, max_length=100)
     name_ar: str | None = None
     description: str | None = None
+    image_url: str | None = None
 
 
 class MealCategoryUpdate(BaseModel):
@@ -13,6 +14,7 @@ class MealCategoryUpdate(BaseModel):
     name_ar: str | None = None
     description: str | None = None
     is_active: bool | None = None
+    image_url: str | None = None
 
 
 class MealCategoryResponse(BaseModel):
@@ -22,6 +24,7 @@ class MealCategoryResponse(BaseModel):
     description: str | None
     is_active: bool
     created_at: datetime
+    image_url: str | None = None
 
     class Config:
         from_attributes = True
