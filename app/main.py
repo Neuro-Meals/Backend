@@ -9,6 +9,7 @@ from app.modules.users.rbac_router import router as rbac_router
 from app.modules.users.profile_router import router as profile_router
 from app.modules.meals.router import router as meal_categories_router
 from app.modules.meals.meal_router import router as meals_router
+from app.modules.plans.router import router as plans_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -27,7 +28,7 @@ app.include_router(rbac_router)
 app.include_router(profile_router)
 app.include_router(meal_categories_router)
 app.include_router(meals_router)
-
+app.include_router(plans_router)
 
 @app.get("/")
 def root():
