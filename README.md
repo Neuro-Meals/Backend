@@ -68,3 +68,22 @@ nutrio_backend/
 └── .env
 
 ```
+
+# PHASE 
+
+```
+Phase 1 ✅ (Completed)
+
+Authentication
+
+✅ Register
+✅ Email OTP
+✅ Login
+✅ Forgot Password
+✅ Reset Password
+✅ Change Password
+✅ Roles
+✅ Permissions
+✅ RBAC
+```
+
