@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -6,13 +7,35 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class CurrentSubscriptionResponse(BaseModel):
+    id: int
+    plan_id: int
+    plan_name: str | None
+    status: str
+    payment_status: str
+    amount: float
+    start_date: datetime | None
+    end_date: datetime | None
+
+
 class LoggedInUser(BaseModel):
     id: int
     first_name: str
     last_name: str
     email: EmailStr
+    phone: str
     role: str
     permissions: list[str]
+
+    gender: str | None
+    age: int | None
+    height_cm: float | None
+    weight_kg: float | None
+    fitness_goal: str | None
+    dietary_preference: str | None
+    allergies: list[str] | None
+
+    subscription: CurrentSubscriptionResponse | None
 
 
 class TokenResponse(BaseModel):
