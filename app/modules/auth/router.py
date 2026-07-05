@@ -84,15 +84,16 @@ def build_logged_in_user(db: Session, user: User) -> LoggedInUser:
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
-    existing_user = get_user_by_email(db, payload.email)
+    try:
+        existing_user = get_user_by_email(db, payload.email)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
 
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    user = create_user(db, payload)
-    send_email_otp(user.email, user.email_otp, purpose="verification")
-
-    return user
+        user = create_user(db, payload)
+        send_email_otp(user.email, user.email_otp, purpose="verification")
+        return user
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/verify-email")

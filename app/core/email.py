@@ -16,7 +16,7 @@ def send_email_otp(to_email: str, otp: str, purpose: str = "verification"):
 
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = settings.MAIL_FROM
+    message["From"] = settings.EMAIL_FROM
     message["To"] = to_email
 
     message.set_content(
@@ -49,7 +49,7 @@ Nutrio Meals Team
 """
     )
 
-    with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT) as smtp:
+    with smtplib.SMTP(settings.EMAIL_SERVER, settings.EMAIL_PORT) as smtp:
         smtp.starttls()
-        smtp.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+        smtp.login(settings.EMAIL_USERNAME, settings.EMAIL_PASSWORD)
         smtp.send_message(message)

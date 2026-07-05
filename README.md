@@ -140,3 +140,17 @@ Authentication
 ✅ RBAC
 ```
 
+# DATA BASE MIGRATIONS
+```
+nano ~/Downloads/NeuroMeals/Backend/alembic.ini
+
+Replace this 
+sqlalchemy.url = driver://user:password@localhost/dbname
+
+with
+
+sqlalchemy.url = postgresql://postgres:password@localhost:5432/nutrio_meals
+
+cd ~/Downloads/NeuroMeals/Backend
+alembic revision --autogenerate -m "Add user columns"
+alembic upgrade head

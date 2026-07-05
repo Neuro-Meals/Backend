@@ -8,16 +8,14 @@ from app.core.config import settings
 
 import random
 
-
-
-
-
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def generate_otp() -> str:
     return str(random.randint(100000, 999999))
 
 def hash_password(password: str) -> str:
+    if len(password.encode("utf-8")) > 72:
+        raise ValueError("Password too long for bcrypt")
     return pwd_context.hash(password)
 
 
