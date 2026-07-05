@@ -5,6 +5,7 @@ from app.db.database import Base, engine
 
 from app.modules.auth.router import router as auth_router
 from app.modules.users.router import router as users_router
+from app.modules.users.rbac_router import router as rbac_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -19,6 +20,7 @@ app = FastAPI(
 # Register routers
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(rbac_router)
 
 
 @app.get("/")

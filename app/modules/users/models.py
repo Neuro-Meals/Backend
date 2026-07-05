@@ -1,180 +1,82 @@
-from datetime import datetime, timedelta
+from datetime import datetime
+from enum import Enum
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, Float, Integer, JSON, String
+from sqlalchemy.orm import Mapped, mapped_column
 
-from app.core.email import send_email_otp
-from app.core.security import (
-    create_access_token,
-    verify_password,
-    hash_password,
-    generate_otp,
-)
-from app.db.database import get_db
-from app.modules.auth.dependencies import get_current_user
-from app.modules.auth.schemas import (
-    LoginRequest,
-    TokenResponse,
-    ResendVerificationOTP,
-    ForgotPasswordRequest,
-    ResetPasswordRequest,
-    ChangePasswordRequest,
-)
-from app.modules.users.models import User
-from app.modules.users.schemas import UserCreate, UserResponse, VerifyEmailOTP
-from app.modules.users.service import create_user, get_user_by_email
+from app.db.database import Base
 
 
-router = APIRouter(prefix="/auth", tags=["Auth"])
+class UserRole(str, Enum):
+    CUSTOMER = "customer"
+    ADMIN = "admin"
+    SUPER_ADMIN = "super_admin"
+    NUTRITION_MANAGER = "nutrition_manager"
+    DELIVERY_MANAGER = "delivery_manager"
+    DRIVER = "driver"
+    FINANCE_MANAGER = "finance_manager"
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: UserCreate, db: Session = Depends(get_db)):
-    existing_user = get_user_by_email(db, payload.email)
-
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    user = create_user(db, payload)
-
-    send_email_otp(user.email, user.email_otp, purpose="verification")
-
-    return user
+class FitnessGoal(str, Enum):
+    WEIGHT_LOSS = "weight_loss"
+    MUSCLE_GAIN = "muscle_gain"
+    MAINTENANCE = "maintenance"
+    HEALTHY_LIFESTYLE = "healthy_lifestyle"
 
 
-@router.post("/verify-email")
-def verify_email(payload: VerifyEmailOTP, db: Session = Depends(get_db)):
-    user = get_user_by_email(db, payload.email)
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if user.is_verified:
-        return {"message": "Email already verified"}
-
-    if user.email_otp != payload.otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-
-    if not user.email_otp_expires_at or user.email_otp_expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="OTP has expired")
-
-    user.is_verified = True
-    user.email_otp = None
-    user.email_otp_expires_at = None
-
-    db.commit()
-
-    return {"message": "Email verified successfully"}
+class Gender(str, Enum):
+    MALE = "male"
+    FEMALE = "female"
+    OTHER = "other"
 
 
-@router.post("/resend-verification-otp")
-def resend_verification_otp(
-    payload: ResendVerificationOTP,
-    db: Session = Depends(get_db),
-):
-    user = get_user_by_email(db, payload.email)
+class User(Base):
+    __tablename__ = "users"
 
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
-    if user.is_verified:
-        return {"message": "Email is already verified"}
+    first_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    otp = generate_otp()
+    email: Mapped[str] = mapped_column(String(150), unique=True, index=True, nullable=False)
+    phone: Mapped[str] = mapped_column(String(30), unique=True, index=True, nullable=False)
 
-    user.email_otp = otp
-    user.email_otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    db.commit()
+    gender: Mapped[Gender | None] = mapped_column(SqlEnum(Gender), nullable=True)
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height_cm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weight_kg: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    send_email_otp(user.email, otp, purpose="verification")
+    fitness_goal: Mapped[FitnessGoal | None] = mapped_column(
+        SqlEnum(FitnessGoal),
+        nullable=True,
+    )
+    dietary_preference: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    return {"message": "Verification OTP sent successfully"}
+    allergies: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
 
-@router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = get_user_by_email(db, payload.email)
+    role: Mapped[UserRole] = mapped_column(
+        SqlEnum(UserRole),
+        default=UserRole.CUSTOMER,
+        nullable=False,
+    )
 
-    if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    email_otp: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    email_otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    if not user.is_verified:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "message": "Please verify your email first",
-                "email": user.email,
-                "requires_verification": True,
-            },
-        )
+    password_reset_otp: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    password_reset_otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    token = create_access_token(subject=str(user.id))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    return TokenResponse(access_token=token)
-
-
-@router.post("/forgot-password")
-def forgot_password(
-    payload: ForgotPasswordRequest,
-    db: Session = Depends(get_db),
-):
-    user = get_user_by_email(db, payload.email)
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    otp = generate_otp()
-
-    user.password_reset_otp = otp
-    user.password_reset_otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
-
-    db.commit()
-
-    send_email_otp(user.email, otp, purpose="password_reset")
-
-    return {"message": "Password reset OTP sent successfully"}
-
-
-@router.post("/reset-password")
-def reset_password(
-    payload: ResetPasswordRequest,
-    db: Session = Depends(get_db),
-):
-    user = get_user_by_email(db, payload.email)
-
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    if user.password_reset_otp != payload.otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
-
-    if (
-        not user.password_reset_otp_expires_at
-        or user.password_reset_otp_expires_at < datetime.utcnow()
-    ):
-        raise HTTPException(status_code=400, detail="OTP has expired")
-
-    user.hashed_password = hash_password(payload.new_password)
-    user.password_reset_otp = None
-    user.password_reset_otp_expires_at = None
-
-    db.commit()
-
-    return {"message": "Password reset successfully"}
-
-
-@router.post("/change-password")
-def change_password(
-    payload: ChangePasswordRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    if not verify_password(payload.old_password, current_user.hashed_password):
-        raise HTTPException(status_code=400, detail="Old password is incorrect")
-
-    current_user.hashed_password = hash_password(payload.new_password)
-
-    db.commit()
-
-    return {"message": "Password changed successfully"}
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )

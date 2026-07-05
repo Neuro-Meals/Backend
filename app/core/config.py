@@ -13,11 +13,12 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         
-    MAIL_USERNAME: str
-    MAIL_PASSWORD: str
-    MAIL_FROM: str
-    MAIL_SERVER: str = "smtp.gmail.com"
-    MAIL_PORT: int = 587    
-
+    EMAIL_USERNAME: str
+    EMAIL_PASSWORD: str
+    EMAIL_FROM: str
+    EMAIL_SERVER: str = "smtp.gmail.com"
+    EMAIL_PORT: int = 587    
+    EMAIL_TLS: bool = True
+    EMAIL_SSL: bool = False
 
 settings = Settings()

@@ -6,9 +6,19 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class LoggedInUser(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: EmailStr
+    role: str
+    permissions: list[str]
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    user: LoggedInUser
 
 
 class ResendVerificationOTP(BaseModel):
