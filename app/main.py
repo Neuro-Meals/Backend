@@ -7,6 +7,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.users.router import router as users_router
 from app.modules.users.rbac_router import router as rbac_router
 from app.modules.users.profile_router import router as profile_router
+from app.modules.meals.router import router as meal_categories_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -23,6 +24,7 @@ app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(rbac_router)
 app.include_router(profile_router)
+app.include_router(meal_categories_router)
 
 
 @app.get("/")
