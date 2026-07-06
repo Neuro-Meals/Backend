@@ -141,6 +141,7 @@ Authentication
 ```
 
 # DATA BASE MIGRATIONS
+
 ```
 nano ~/Downloads/NeuroMeals/Backend/alembic.ini
 
