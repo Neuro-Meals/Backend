@@ -154,3 +154,5 @@ sqlalchemy.url = postgresql://postgres:password@localhost:5432/nutrio_meals
 cd ~/Downloads/NeuroMeals/Backend
 alembic revision --autogenerate -m "Add user columns"
 alembic upgrade head
+
+```
