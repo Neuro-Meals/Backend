@@ -11,6 +11,7 @@ from app.modules.meals.router import router as meal_categories_router
 from app.modules.meals.meal_router import router as meals_router
 from app.modules.plans.router import router as plans_router
 from app.modules.subscriptions.router import router as subscriptions_router
+from fastapi.middleware.cors import CORSMiddleware
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -21,6 +22,14 @@ app = FastAPI(
 )
 
 # API_PREFIX = "/api/v1"
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],            # or ["https://example.com"] in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Register routers
 app.include_router(auth_router)

@@ -1,7 +1,7 @@
 import requests
 import streamlit as st
 
-API_BASE = "http://127.0.0.1:8000"
+API_BASE = "http://185.237.97.69:8080"
 
 st.set_page_config(page_title="NeuroMeals API Tester", layout="wide")
 
