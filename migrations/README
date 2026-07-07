@@ -1,12 +1,7 @@
 Generic single-database configuration.
 
 
-1. Payments
-- checkout
-- payment webhook
-- mark subscription paid/active
-- payment history
-- invoices
+
 
 2. Meal plan items
 - attach specific meals to a plan
@@ -15,12 +10,6 @@ Generic single-database configuration.
 3. Customer meal selection
 - customer chooses meals for each day
 - skip meal / skip day
-
-4. Dashboards
-- customer dashboard
-- admin dashboard
-- finance dashboard
-- delivery dashboard
 
 5. Reports
 - revenue report
@@ -45,8 +34,23 @@ Generic single-database configuration.
 9. AI / nutrition recommendation
 - recommend meals based on goal, allergies, calories
 
+
+4. Dashboards
+- customer dashboard
+- admin dashboard
+- finance dashboard
+- delivery dashboard
+
+1. Payments
+- checkout
+- payment webhook
+- mark subscription paid/active
+- payment history
+- invoices
+
 10. Production improvements
 - proper foreign keys
 - indexes
 - soft delete
 - audit logs
+

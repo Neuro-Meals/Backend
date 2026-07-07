@@ -20,5 +20,10 @@ class Settings(BaseSettings):
     EMAIL_PORT: int = 587    
     EMAIL_TLS: bool = True
     EMAIL_SSL: bool = False
+    
+    STRIPE_SECRET_KEY: str
+    STRIPE_WEBHOOK_SECRET: str
+    FRONTEND_SUCCESS_URL: str
+    FRONTEND_CANCEL_URL: str
 
 settings = Settings()
