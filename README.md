@@ -185,3 +185,31 @@ sudo systemctl restart nutriomeals-api
 
 ```
 
+Register
+↓
+Verify email
+↓
+Login
+↓
+Frontend shows available plans
+GET /plans/?is_active=true
+↓
+User chooses plan
+↓
+Create subscription
+POST /subscriptions/
+↓
+Subscription becomes pending_payment
+↓
+Payment later
+
+
+"subscription": {
+  "id": 1,
+  "plan_id": 2,
+  "plan_name": "Muscle Gain Monthly Plan",
+  "status": "pending_payment",
+  "payment_status": "unpaid"
+}
+
+
