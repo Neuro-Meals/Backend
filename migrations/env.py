@@ -19,7 +19,7 @@ from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import Subscription
 from app.modules.orders.models import Order
 from app.modules.deliveries.models import Delivery
-
+from app.modules.notifications.models import Notification
 
 config = context.config
 
