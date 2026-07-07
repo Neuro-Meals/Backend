@@ -156,4 +156,17 @@ cd ~/Downloads/NeuroMeals/Backend
 alembic revision --autogenerate -m "Add user columns"
 alembic upgrade head
 
+cd /root/Backend
+alembic stamp head
+
+
+1: cd /root/Backend
+ls -la migrations/versions
+alembic heads
+alembic history --verbose
+alembic current
+# or check DB directly:
+python -c "import os,urllib.parse; print(os.getenv('DATABASE_URL'))"
+psql "$DATABASE_URL" -c "SELECT * FROM alembic_version;"
+
 ```

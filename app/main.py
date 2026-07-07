@@ -25,7 +25,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://nutriomeals.com/", "https://www.nutriomeals.com/", "http://localhost:3000", "https://nutriomeals.com", "https://www.nutriomeals.com", "https://nutriomeals.com/", "https://www.nutriomeals.com/", "http://localhost:3000", "https://nutriomeals.com/test-register", "https://www.nutriomeals.com/test-register", "https://nutriomeals.com/test-register/", "https://www.nutriomeals.com/test-register/", "http://localhost:3000/test-register", "https://nutriomeals.com/test-register", "https://www.nutriomeals.com/test-register", "https://nutriomeals.com/test-register/", "https://www.nutriomeals.com/test-register/", "http://localhost:3000/test-register"],           
+    allow_origins=["*"],           
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
