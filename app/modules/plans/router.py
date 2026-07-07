@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
+from app.modules.meals.models import Meal
+from app.modules.plans.models import MealPlan, MealPlanItem, PlanGoal, PlanType
+from app.modules.plans.schemas import MealPlanItemCreate, MealPlanItemResponse
 
 from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
@@ -143,3 +146,91 @@ def delete_plan(
     db.commit()
 
     return {"message": "Plan deleted successfully"}
+
+@router.post("/{plan_id}/items", response_model=MealPlanItemResponse)
+def add_meal_to_plan(
+    plan_id: int,
+    payload: MealPlanItemCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+            UserRole.NUTRITION_MANAGER,
+        )
+    ),
+):
+    plan = db.query(MealPlan).filter(MealPlan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    meal = db.query(Meal).filter(Meal.id == payload.meal_id).first()
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+
+    exists = db.query(MealPlanItem).filter(
+        MealPlanItem.plan_id == plan_id,
+        MealPlanItem.meal_id == payload.meal_id,
+        MealPlanItem.day_number == payload.day_number,
+        MealPlanItem.meal_time == payload.meal_time,
+    ).first()
+
+    if exists:
+        raise HTTPException(status_code=400, detail="Meal already added to this plan slot")
+
+    item = MealPlanItem(
+        plan_id=plan_id,
+        meal_id=payload.meal_id,
+        day_number=payload.day_number,
+        meal_time=payload.meal_time,
+    )
+
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+
+    return item
+
+
+@router.get("/{plan_id}/items", response_model=list[MealPlanItemResponse])
+def list_plan_items(
+    plan_id: int,
+    db: Session = Depends(get_db),
+):
+    plan = db.query(MealPlan).filter(MealPlan.id == plan_id).first()
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    return (
+        db.query(MealPlanItem)
+        .filter(MealPlanItem.plan_id == plan_id)
+        .order_by(MealPlanItem.day_number.asc(), MealPlanItem.meal_time.asc())
+        .all()
+    )
+
+
+@router.delete("/{plan_id}/items/{item_id}")
+def remove_meal_from_plan(
+    plan_id: int,
+    item_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+            UserRole.NUTRITION_MANAGER,
+        )
+    ),
+):
+    item = db.query(MealPlanItem).filter(
+        MealPlanItem.id == item_id,
+        MealPlanItem.plan_id == plan_id,
+    ).first()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Plan item not found")
+
+    db.delete(item)
+    db.commit()
+
+    return {"message": "Meal removed from plan successfully"}

@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, Float, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, Float, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -52,3 +52,28 @@ class MealPlan(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+    
+class MealPlanItem(Base):
+    __tablename__ = "meal_plan_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+
+    plan_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    meal_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+
+    day_number: Mapped[int] = mapped_column(Integer, nullable=False)  # 1,2,3...
+    meal_time: Mapped[str] = mapped_column(String(50), nullable=False)  # breakfast/lunch/dinner/snack
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_id",
+            "meal_id",
+            "day_number",
+            "meal_time",
+            name="unique_plan_meal_day_time",
+        ),
+    )    

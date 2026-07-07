@@ -70,3 +70,21 @@ class MealPlanResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        
+class MealPlanItemCreate(BaseModel):
+    meal_id: int
+    day_number: int = Field(..., ge=1)
+    meal_time: str = Field(..., min_length=2, max_length=50)
+
+
+class MealPlanItemResponse(BaseModel):
+    id: int
+    plan_id: int
+    meal_id: int
+    day_number: int
+    meal_time: str
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True        
