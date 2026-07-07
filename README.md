@@ -170,3 +170,12 @@ python -c "import os,urllib.parse; print(os.getenv('DATABASE_URL'))"
 psql "$DATABASE_URL" -c "SELECT * FROM alembic_version;"
 
 ```
+
+# CHECK LIVE LOGS 
+
+```
+sudo journalctl -u nutriomeals-api -f
+
+
+```
+

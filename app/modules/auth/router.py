@@ -22,7 +22,7 @@ from app.modules.subscriptions.models import Subscription, SubscriptionStatus
 from app.modules.users.models import User
 from app.modules.users.rbac_service import get_user_permissions
 from app.modules.users.schemas import UserCreate, UserResponse, VerifyEmailOTP
-from app.modules.users.service import create_user, get_user_by_email
+from app.modules.users.service import create_user, get_user_by_email, get_user_by_phone
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -88,6 +88,10 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         existing_user = get_user_by_email(db, payload.email)
         if existing_user:
             raise HTTPException(status_code=400, detail="Email already registered")
+
+        existing_user = get_user_by_phone(db, payload.phone)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Phone number already registered")
 
         user = create_user(db, payload)
         send_email_otp(user.email, user.email_otp, purpose="verification")
