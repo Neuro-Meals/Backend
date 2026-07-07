@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password, generate_otp
@@ -10,11 +11,32 @@ def get_user_by_email(db: Session, email: str) -> User | None:
     return db.query(User).filter(User.email == email).first()
 
 
+def get_user_by_phone(db: Session, phone: str) -> User | None:
+    return db.query(User).filter(User.phone == phone).first()
+
+
 def get_user_by_id(db: Session, user_id: int) -> User | None:
     return db.query(User).filter(User.id == user_id).first()
 
 
 def create_user(db: Session, payload: UserCreate, role: UserRole = UserRole.CUSTOMER) -> User:
+
+    # Check email
+    existing_email = get_user_by_email(db, payload.email)
+    if existing_email:
+        raise HTTPException(
+            status_code=409,
+            detail="Email address already exists."
+        )
+
+    # Check phone
+    existing_phone = get_user_by_phone(db, payload.phone)
+    if existing_phone:
+        raise HTTPException(
+            status_code=409,
+            detail="Phone number already exists."
+        )
+
     otp = generate_otp()
 
     user = User(
