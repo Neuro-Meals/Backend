@@ -179,3 +179,9 @@ sudo journalctl -u nutriomeals-api -f
 
 ```
 
+# RESTART 
+```
+sudo systemctl restart nutriomeals-api
+
+```
+
