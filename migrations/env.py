@@ -18,6 +18,7 @@ from app.modules.meals.models import MealCategory, Meal
 from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import Subscription
 from app.modules.orders.models import Order
+from app.modules.deliveries.models import Delivery
 
 
 config = context.config
