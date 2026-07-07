@@ -15,6 +15,7 @@ from app.modules.orders.router import router as orders_router
 from app.modules.deliveries.router import router as deliveries_router
 from app.modules.notifications.router import router as notifications_router
 from fastapi.middleware.cors import CORSMiddleware
+from app.modules.meal_selections.router import router as meal_selections_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -46,6 +47,7 @@ app.include_router(subscriptions_router)
 app.include_router(orders_router)
 app.include_router(deliveries_router)
 app.include_router(notifications_router)
+app.include_router(meal_selections_router)
 
 @app.get("/")
 def root():
