@@ -11,6 +11,7 @@ from app.modules.meals.router import router as meal_categories_router
 from app.modules.meals.meal_router import router as meals_router
 from app.modules.plans.router import router as plans_router
 from app.modules.subscriptions.router import router as subscriptions_router
+from app.modules.orders.router import router as orders_router
 from fastapi.middleware.cors import CORSMiddleware
 
 # Create database tables
@@ -40,6 +41,7 @@ app.include_router(meal_categories_router)
 app.include_router(meals_router)
 app.include_router(plans_router)
 app.include_router(subscriptions_router)
+app.include_router(orders_router)
 
 @app.get("/")
 def root():

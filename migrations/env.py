@@ -17,6 +17,7 @@ from app.modules.users.rbac_models import Role, Permission, UserRoleLink, RolePe
 from app.modules.meals.models import MealCategory, Meal
 from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import Subscription
+from app.modules.orders.models import Order
 
 
 config = context.config
