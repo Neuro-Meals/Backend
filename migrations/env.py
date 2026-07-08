@@ -23,6 +23,7 @@ from app.modules.notifications.models import Notification
 from app.modules.plans.models import MealPlan, MealPlanItem
 from app.modules.meal_selections.models import MealSelection
 from app.modules.payments.models import Payment
+from app.modules.coupons.models import Coupon
 
 config = context.config
 
