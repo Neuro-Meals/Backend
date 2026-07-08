@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -33,15 +33,15 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(150), nullable=False)
     message: Mapped[str] = mapped_column(String(1000), nullable=False)
 
-    notification_type: Mapped[NotificationType] = mapped_column(
-        SqlEnum(NotificationType),
-        default=NotificationType.GENERAL,
+    notification_type: Mapped[str] = mapped_column(
+        String(50),
+        default=NotificationType.GENERAL.value,
         nullable=False,
     )
 
-    channel: Mapped[NotificationChannel] = mapped_column(
-        SqlEnum(NotificationChannel),
-        default=NotificationChannel.IN_APP,
+    channel: Mapped[str] = mapped_column(
+        String(50),
+        default=NotificationChannel.IN_APP.value,
         nullable=False,
     )
 
