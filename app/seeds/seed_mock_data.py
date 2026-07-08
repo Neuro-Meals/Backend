@@ -152,8 +152,8 @@ def seed():
     db = SessionLocal()
 
     try:
-        # admin = get_or_create_user(db, "nutriomeals0@gmail.com", "+966000000000", UserRole.ADMIN)
-        # super_admin = get_or_create_user(db, "nutriomeals1@gmail.com", "+966000000001", UserRole.SUPER_ADMIN)
+        admin = get_or_create_user(db, "nutriomeals0@gmail.com", "+966000000000", UserRole.ADMIN)
+        super_admin = get_or_create_user(db, "nutriomeals1@gmail.com", "+966000000001", UserRole.SUPER_ADMIN)
         customer = get_or_create_user(db, "customer@test.com", "+966000000002", UserRole.CUSTOMER)
         driver = get_or_create_user(db, "driver@test.com", "+966000000003", UserRole.DRIVER)
 
@@ -297,14 +297,14 @@ def seed():
 
         print("✅ Mock data seeded successfully")
         print("")
-        # print("Admin login:")
-        # print("  email: nutriomeals0@gmail.com")
-        # print("  password: Amro&258")
-        # print("")
-        # print("Super Admin login:")
-        # print("  email: nutriomeals1@gmail.com")
-        # print("  password: Amro&258")
-        # print("")
+        print("Admin login:")
+        print("  email: nutriomeals0@gmail.com")
+        print("  password: Amro&258")
+        print("")
+        print("Super Admin login:")
+        print("  email: nutriomeals1@gmail.com")
+        print("  password: Amro&258")
+        print("")
         print("Customer login:")
         print("  email: customer@test.com")
         print("  password: Amro&258")
