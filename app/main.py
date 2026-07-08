@@ -23,6 +23,8 @@ from app.modules.uploads.router import router as uploads_router
 from app.modules.driver.router import router as driver_router
 from app.modules.nutrition.router import router as nutrition_router
 from app.modules.coupons.router import router as coupons_router
+from app.modules.reviews.router import router as reviews_router
+
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -63,6 +65,7 @@ app.include_router(payments_router)
 app.include_router(driver_router)
 app.include_router(nutrition_router)
 app.include_router(coupons_router)
+app.include_router(reviews_router)
 
 @app.get("/")
 def root():
