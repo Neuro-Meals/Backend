@@ -48,7 +48,7 @@ def create_checkout(
         subscription_id=subscription.id,
         amount=subscription.amount,
         currency="usd",
-        status=PaymentRecordStatus.PENDING,
+        status=PaymentRecordStatus.PENDING.value,
     )
 
     db.add(payment)
@@ -122,7 +122,7 @@ async def stripe_webhook(
         subscription = db.query(Subscription).filter(Subscription.id == int(subscription_id)).first()
 
         if payment and subscription:
-            payment.status = PaymentRecordStatus.PAID
+            payment.status = PaymentRecordStatus.PAID.value
             payment.stripe_payment_intent_id = session.get("payment_intent")
             payment.paid_at = datetime.utcnow()
 

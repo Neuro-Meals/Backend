@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, Enum as SqlEnum, Float, Integer, String
+from sqlalchemy import DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -26,15 +26,15 @@ class Payment(Base):
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     subscription_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
 
-    provider: Mapped[PaymentProvider] = mapped_column(
-        SqlEnum(PaymentProvider),
-        default=PaymentProvider.STRIPE,
+    provider: Mapped[str] = mapped_column(
+        String(50),
+        default=PaymentProvider.STRIPE.value,
         nullable=False,
     )
 
-    status: Mapped[PaymentRecordStatus] = mapped_column(
-        SqlEnum(PaymentRecordStatus),
-        default=PaymentRecordStatus.PENDING,
+    status: Mapped[str] = mapped_column(
+        String(50),
+        default=PaymentRecordStatus.PENDING.value,
         nullable=False,
     )
 
@@ -49,4 +49,8 @@ class Payment(Base):
     paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
