@@ -20,6 +20,7 @@ from app.modules.reports.router import router as reports_router
 from fastapi.staticfiles import StaticFiles
 from app.modules.payments.router import router as payments_router
 from app.modules.uploads.router import router as uploads_router
+from app.modules.driver.router import router as driver_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -57,6 +58,7 @@ app.include_router(meal_selections_router)
 app.include_router(reports_router)
 app.include_router(uploads_router)
 app.include_router(payments_router)
+app.include_router(driver_router)
 
 @app.get("/")
 def root():
