@@ -25,5 +25,7 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_SECRET: str = ""
     FRONTEND_SUCCESS_URL: str = "https://nutriomeals.com/payment-success"
     FRONTEND_CANCEL_URL: str = "https://nutriomeals.com/payment-cancel"
+    
+    REDIS_URL: str = "redis://localhost:6379/0"
 
 settings = Settings()

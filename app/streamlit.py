@@ -1,7 +1,7 @@
 import requests
 import streamlit as st
 
-API_BASE = "http://127.0.0.1:8000"
+API_BASE = "https://app.nutriomeals.com"
 
 st.set_page_config(page_title="NeuroMeals API Tester", layout="wide")
 

@@ -23,6 +23,8 @@ from app.modules.users.models import User
 from app.modules.users.rbac_service import get_user_permissions
 from app.modules.users.schemas import UserCreate, UserResponse, VerifyEmailOTP
 from app.modules.users.service import create_user, get_user_by_email, get_user_by_phone
+from fastapi import Request
+from app.core.rate_limiter import get_client_ip, hash_key, normalize_identifier, rate_limit
 
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -101,7 +103,17 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/verify-email")
-def verify_email(payload: VerifyEmailOTP, db: Session = Depends(get_db)):
+def verify_email(
+    payload: VerifyEmailOTP,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = get_client_ip(request)
+    email_key = hash_key(normalize_identifier(payload.email))
+
+    rate_limit(f"rate:verify-email:ip:{ip}", limit=5, window_seconds=600)
+    rate_limit(f"rate:verify-email:email:{email_key}", limit=5, window_seconds=600)
+
     user = get_user_by_email(db, payload.email)
 
     if not user:
@@ -127,7 +139,17 @@ def verify_email(payload: VerifyEmailOTP, db: Session = Depends(get_db)):
 
 
 @router.post("/resend-verification-otp")
-def resend_verification_otp(payload: ResendVerificationOTP, db: Session = Depends(get_db)):
+def resend_verification_otp(
+    payload: ResendVerificationOTP,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = get_client_ip(request)
+    email_key = hash_key(normalize_identifier(payload.email))
+
+    rate_limit(f"rate:resend-otp:ip:{ip}", limit=3, window_seconds=60)
+    rate_limit(f"rate:resend-otp:email:{email_key}", limit=1, window_seconds=60)
+
     user = get_user_by_email(db, payload.email)
 
     if not user:
@@ -149,7 +171,17 @@ def resend_verification_otp(payload: ResendVerificationOTP, db: Session = Depend
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(
+    payload: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = get_client_ip(request)
+    email_key = hash_key(normalize_identifier(payload.email))
+
+    rate_limit(f"rate:login:ip:{ip}", limit=5, window_seconds=60)
+    rate_limit(f"rate:login:email:{email_key}", limit=5, window_seconds=60)
+
     user = get_user_by_email(db, payload.email)
 
     if not user or not verify_password(payload.password, user.hashed_password):
@@ -172,7 +204,6 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         user=build_logged_in_user(db, user),
     )
 
-
 @router.get("/me", response_model=LoggedInUser)
 def me(
     db: Session = Depends(get_db),
@@ -182,36 +213,56 @@ def me(
 
 
 @router.post("/forgot-password")
-def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = get_client_ip(request)
+    email_key = hash_key(normalize_identifier(payload.email))
+
+    rate_limit(f"rate:forgot-password:ip:{ip}", limit=10, window_seconds=3600)
+    rate_limit(f"rate:forgot-password:email:{email_key}", limit=3, window_seconds=3600)
+
     user = get_user_by_email(db, payload.email)
 
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    if user:
+        otp = generate_otp()
+        user.password_reset_otp = otp
+        user.password_reset_otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
 
-    otp = generate_otp()
-    user.password_reset_otp = otp
-    user.password_reset_otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
+        db.commit()
+        db.refresh(user)
 
-    db.commit()
-    db.refresh(user)
+        send_email_otp(user.email, otp, purpose="password_reset")
 
-    send_email_otp(user.email, otp, purpose="password_reset")
-
-    return {"message": "Password reset OTP sent successfully"}
+    return {
+        "message": "If the account exists, a password reset email has been sent."
+    }
 
 
 @router.post("/reset-password")
-def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
+def reset_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ip = get_client_ip(request)
+    email_key = hash_key(normalize_identifier(payload.email))
+
+    rate_limit(f"rate:reset-password:ip:{ip}", limit=5, window_seconds=600)
+    rate_limit(f"rate:reset-password:email:{email_key}", limit=5, window_seconds=600)
+
     user = get_user_by_email(db, payload.email)
 
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     if user.password_reset_otp != payload.otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP")
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     if not user.password_reset_otp_expires_at or user.password_reset_otp_expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="OTP has expired")
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
 
     user.hashed_password = hash_password(payload.new_password)
     user.password_reset_otp = None

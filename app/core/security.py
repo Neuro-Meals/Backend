@@ -1,17 +1,17 @@
 from datetime import datetime, timedelta, timezone
+import secrets
 from typing import Optional
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
-
-import random
-
+import secrets
+    
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def generate_otp() -> str:
-    return str(random.randint(100000, 999999))
+def generate_otp():
+    return f"{secrets.randbelow(1000000):06d}"
 
 def hash_password(password: str) -> str:
     if len(password.encode("utf-8")) > 72:
