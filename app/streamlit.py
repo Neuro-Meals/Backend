@@ -38,6 +38,7 @@ menu = st.sidebar.selectbox(
         "Meals",
         "Plans",
         "Subscriptions",
+        "Payments",
     ],
 )
 
@@ -704,6 +705,58 @@ elif menu == "Subscriptions":
         if st.button("Cancel Subscription"):
             res = requests.post(
                 f"{API_BASE}/subscriptions/{subscription_id}/cancel",
+                headers=headers(),
+            )
+            show_response(res)
+            
+            
+            # ================= PAYMENTS =================
+
+elif menu == "Payments":
+    tab1, tab2, tab3 = st.tabs(
+        ["Create Checkout", "Verify Session", "My Payments"]
+    )
+
+    with tab1:
+        st.subheader("Create Stripe Checkout")
+
+        subscription_id = st.number_input("Subscription ID", min_value=1)
+
+        if st.button("Create Checkout"):
+            res = requests.post(
+                f"{API_BASE}/payments/create-checkout",
+                json={"subscription_id": subscription_id},
+                headers=headers(),
+            )
+
+            show_response(res)
+
+            if res.status_code == 200:
+                data = res.json()
+                checkout_url = data.get("checkout_url")
+
+                if checkout_url:
+                    st.success("Checkout created successfully")
+                    st.link_button("Open Stripe Checkout", checkout_url)
+
+    with tab2:
+        st.subheader("Verify Stripe Session")
+
+        session_id = st.text_input("Stripe Session ID", placeholder="cs_test_xxx")
+
+        if st.button("Verify Payment"):
+            res = requests.get(
+                f"{API_BASE}/payments/verify-session/{session_id}",
+                headers=headers(),
+            )
+            show_response(res)
+
+    with tab3:
+        st.subheader("My Payments")
+
+        if st.button("Get My Payments"):
+            res = requests.get(
+                f"{API_BASE}/payments/my",
                 headers=headers(),
             )
             show_response(res)
