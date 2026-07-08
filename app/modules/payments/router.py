@@ -73,7 +73,7 @@ def create_checkout(
                 "quantity": 1,
             }
         ],
-        success_url=f"{settings.FRONTEND_SUCCESS_URL}?payment_id={payment.id}&session_id={{CHECKOUT_SESSION_ID}}",
+        success_url=f"{settings.FRONTEND_SUCCESS_URL}?session_id={{CHECKOUT_SESSION_ID}}&payment_id={payment.id}",
         cancel_url=f"{settings.FRONTEND_CANCEL_URL}?payment_id={payment.id}",
         metadata={
             "payment_id": str(payment.id),
@@ -188,3 +188,49 @@ def list_payments(
             "pages": (total + limit - 1) // limit,
         },
     }
+    
+@router.get("/verify-session/{session_id}", response_model=PaymentResponse)
+def verify_stripe_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    payment = db.query(Payment).filter(
+        Payment.stripe_checkout_session_id == session_id,
+        Payment.user_id == current_user.id,
+    ).first()
+
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    session = stripe.checkout.Session.retrieve(session_id)
+
+    if session.payment_status != "paid":
+        raise HTTPException(
+            status_code=400,
+            detail="Payment is not completed yet",
+        )
+
+    subscription = db.query(Subscription).filter(
+        Subscription.id == payment.subscription_id,
+        Subscription.user_id == current_user.id,
+    ).first()
+
+    if not subscription:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    payment.status = PaymentRecordStatus.PAID.value
+    payment.stripe_payment_intent_id = session.payment_intent
+    payment.paid_at = datetime.utcnow()
+
+    subscription.payment_status = PaymentStatus.PAID
+    subscription.status = SubscriptionStatus.ACTIVE
+
+    if not subscription.start_date:
+        subscription.start_date = datetime.utcnow()
+        subscription.end_date = datetime.utcnow() + timedelta(days=30)
+
+    db.commit()
+    db.refresh(payment)
+
+    return payment    
