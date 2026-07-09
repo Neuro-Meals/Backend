@@ -18,7 +18,8 @@ from app.modules.subscriptions.models import (
     Subscription,
     SubscriptionStatus,
 )
-from app.modules.users.models import User, UserRole, MealPlan
+from app.modules.plans.models import MealPlan
+from app.modules.users.models import User, UserRole
 
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
