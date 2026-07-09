@@ -18,49 +18,110 @@ from app.modules.users.models import User, UserRole
 router = APIRouter(prefix="/subscriptions", tags=["Subscriptions"])
 
 
-@router.post("/", response_model=SubscriptionResponse)
-def create_subscription(
-    payload: SubscriptionCreate,
+@router.get("/")
+def list_subscriptions(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(
+        require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.FINANCE_MANAGER)
+    ),
+    status: SubscriptionStatus | None = Query(None),
+    payment_status: PaymentStatus | None = Query(None),
+    user_id: int | None = Query(None),
+    plan_id: int | None = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=100),
 ):
-    plan = db.query(MealPlan).filter(
-        MealPlan.id == payload.plan_id,
-        MealPlan.is_active == True,
-    ).first()
+    query = db.query(Subscription)
 
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found or inactive")
+    if status:
+        query = query.filter(Subscription.status == status)
 
-    existing = db.query(Subscription).filter(
-        Subscription.user_id == current_user.id,
-        Subscription.status.in_([
-            SubscriptionStatus.PENDING_PAYMENT,
-            SubscriptionStatus.ACTIVE,
-            SubscriptionStatus.PAUSED,
-        ]),
-    ).first()
+    if payment_status:
+        query = query.filter(Subscription.payment_status == payment_status)
 
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail="You already have an active or pending subscription",
-        )
+    if user_id:
+        query = query.filter(Subscription.user_id == user_id)
 
-    subscription = Subscription(
-        user_id=current_user.id,
-        plan_id=plan.id,
-        amount=plan.price,
-        status=SubscriptionStatus.PENDING_PAYMENT,
-        payment_status=PaymentStatus.UNPAID,
-        notes=payload.notes,
+    if plan_id:
+        query = query.filter(Subscription.plan_id == plan_id)
+
+    total = query.count()
+
+    subscriptions = (
+        query.order_by(Subscription.id.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
     )
 
-    db.add(subscription)
-    db.commit()
-    db.refresh(subscription)
+    results = []
 
-    return subscription
+    for subscription in subscriptions:
+        user = db.query(User).filter(User.id == subscription.user_id).first()
+        plan = db.query(MealPlan).filter(MealPlan.id == subscription.plan_id).first()
+
+        results.append(
+            {
+                "id": subscription.id,
+                "status": (
+                    subscription.status.value
+                    if hasattr(subscription.status, "value")
+                    else subscription.status
+                ),
+                "payment_status": (
+                    subscription.payment_status.value
+                    if hasattr(subscription.payment_status, "value")
+                    else subscription.payment_status
+                ),
+                "amount": subscription.amount,
+                "start_date": subscription.start_date,
+                "end_date": subscription.end_date,
+                "notes": subscription.notes,
+                "created_at": subscription.created_at,
+
+                "customer": {
+                    "id": user.id if user else None,
+                    "first_name": user.first_name if user else None,
+                    "last_name": user.last_name if user else None,
+                    "full_name": f"{user.first_name} {user.last_name}" if user else None,
+                    "email": user.email if user else None,
+                    "phone": user.phone if user else None,
+                    "role": user.role.value if user else None,
+                    "is_verified": user.is_verified if user else None,
+                },
+
+                "plan": {
+                    "id": plan.id if plan else None,
+                    "name_en": plan.name_en if plan else None,
+                    "name_ar": plan.name_ar if plan else None,
+                    "plan_type": (
+                        plan.plan_type.value
+                        if plan and hasattr(plan.plan_type, "value")
+                        else plan.plan_type if plan else None
+                    ),
+                    "goal": (
+                        plan.goal.value
+                        if plan and hasattr(plan.goal, "value")
+                        else plan.goal if plan else None
+                    ),
+                    "price": plan.price if plan else None,
+                    "duration_days": plan.duration_days if plan else None,
+                    "meals_per_day": plan.meals_per_day if plan else None,
+                    "total_meals": plan.total_meals if plan else None,
+                    "image_url": plan.image_url if plan else None,
+                },
+            }
+        )
+
+    return {
+        "data": results,
+        "meta": {
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit,
+        },
+    }
 
 
 @router.get("/my", response_model=list[SubscriptionResponse])
