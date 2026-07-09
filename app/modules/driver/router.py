@@ -1,8 +1,10 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
+from app.core.security import hash_password
 from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.deliveries.models import Delivery, DeliveryStatus
@@ -14,11 +16,26 @@ from app.modules.users.models import User, UserRole
 router = APIRouter(prefix="/driver", tags=["Driver App"])
 
 
-def get_driver_delivery(
-    db: Session,
-    delivery_id: int,
-    driver_id: int,
-) -> Delivery:
+class DriverCreate(BaseModel):
+    first_name: str
+    last_name: str
+    email: EmailStr
+    phone: str
+    password: str = Field(..., min_length=6)
+    location: str | None = None
+    address: str | None = None
+
+
+class DriverUpdate(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    phone: str | None = None
+    location: str | None = None
+    address: str | None = None
+    is_active: bool | None = None
+
+
+def get_driver_delivery(db: Session, delivery_id: int, driver_id: int) -> Delivery:
     delivery = db.query(Delivery).filter(
         Delivery.id == delivery_id,
         Delivery.driver_id == driver_id,
@@ -30,17 +47,104 @@ def get_driver_delivery(
     return delivery
 
 
+@router.post("/admin")
+def create_driver(
+    payload: DriverCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+):
+    if db.query(User).filter(User.email == payload.email).first():
+        raise HTTPException(status_code=400, detail="Email already exists")
+
+    if db.query(User).filter(User.phone == payload.phone).first():
+        raise HTTPException(status_code=400, detail="Phone already exists")
+
+    driver = User(
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        email=payload.email,
+        phone=payload.phone,
+        location=payload.location,
+        address=payload.address,
+        hashed_password=hash_password(payload.password),
+        role=UserRole.DRIVER,
+        is_active=True,
+        is_verified=True,
+    )
+
+    db.add(driver)
+    db.commit()
+    db.refresh(driver)
+    return driver
+
+
+@router.get("/admin")
+def list_drivers(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+):
+    return db.query(User).filter(User.role == UserRole.DRIVER).order_by(User.id.desc()).all()
+
+
+@router.get("/admin/{driver_id}")
+def get_driver(
+    driver_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+):
+    driver = db.query(User).filter(User.id == driver_id, User.role == UserRole.DRIVER).first()
+
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    return driver
+
+
+@router.put("/admin/{driver_id}")
+def update_driver(
+    driver_id: int,
+    payload: DriverUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+):
+    driver = db.query(User).filter(User.id == driver_id, User.role == UserRole.DRIVER).first()
+
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(driver, field, value)
+
+    db.commit()
+    db.refresh(driver)
+    return driver
+
+
+@router.delete("/admin/{driver_id}")
+def delete_driver(
+    driver_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+):
+    driver = db.query(User).filter(User.id == driver_id, User.role == UserRole.DRIVER).first()
+
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found")
+
+    driver.is_active = False
+    db.commit()
+
+    return {"message": "Driver deactivated successfully"}
+
+
 @router.get("/deliveries", response_model=list[DeliveryResponse])
 def my_driver_deliveries(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DRIVER)),
 ):
-    return (
-        db.query(Delivery)
-        .filter(Delivery.driver_id == current_user.id)
-        .order_by(Delivery.id.desc())
-        .all()
-    )
+    return db.query(Delivery).filter(
+        Delivery.driver_id == current_user.id
+    ).order_by(Delivery.id.desc()).all()
 
 
 @router.get("/deliveries/{delivery_id}", response_model=DeliveryResponse)
@@ -72,7 +176,6 @@ def pickup_delivery(
 
     db.commit()
     db.refresh(delivery)
-
     return delivery
 
 
@@ -95,7 +198,6 @@ def out_for_delivery(
 
     db.commit()
     db.refresh(delivery)
-
     return delivery
 
 
@@ -107,10 +209,7 @@ def complete_delivery(
 ):
     delivery = get_driver_delivery(db, delivery_id, current_user.id)
 
-    if delivery.status not in [
-        DeliveryStatus.OUT_FOR_DELIVERY,
-        DeliveryStatus.PICKED_UP,
-    ]:
+    if delivery.status not in [DeliveryStatus.OUT_FOR_DELIVERY, DeliveryStatus.PICKED_UP]:
         raise HTTPException(status_code=400, detail="Delivery cannot be completed now")
 
     delivery.status = DeliveryStatus.DELIVERED
@@ -122,7 +221,6 @@ def complete_delivery(
 
     db.commit()
     db.refresh(delivery)
-
     return delivery
 
 
@@ -143,7 +241,6 @@ def fail_delivery(
 
     db.commit()
     db.refresh(delivery)
-
     return delivery
 
 
@@ -161,5 +258,4 @@ def update_delivery_location(
 
     db.commit()
     db.refresh(delivery)
-
     return delivery
