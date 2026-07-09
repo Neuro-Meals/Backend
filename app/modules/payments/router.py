@@ -155,7 +155,11 @@ def my_payments(
 def list_payments(
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.FINANCE_MANAGER)
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+            UserRole.FINANCE_MANAGER,
+        )
     ),
     status: PaymentRecordStatus | None = Query(None),
     user_id: int | None = Query(None),
@@ -179,8 +183,44 @@ def list_payments(
         .all()
     )
 
+    results = []
+
+    for payment in payments:
+        user = db.query(User).filter(User.id == payment.user_id).first()
+
+        results.append(
+            {
+                "id": payment.id,
+                "user_id": payment.user_id,
+                "user": {
+                    "id": user.id if user else None,
+                    "first_name": user.first_name if user else None,
+                    "last_name": user.last_name if user else None,
+                    "full_name": (
+                        f"{user.first_name} {user.last_name}"
+                        if user
+                        else None
+                    ),
+                    "email": user.email if user else None,
+                    "phone": user.phone if user else None,
+                    "role": user.role.value if user else None,
+                    "is_verified": user.is_verified if user else None,
+                },
+                "subscription_id": payment.subscription_id,
+                "provider": payment.provider,
+                "status": payment.status,
+                "amount": payment.amount,
+                "currency": payment.currency,
+                "checkout_url": payment.checkout_url,
+                "stripe_checkout_session_id": payment.stripe_checkout_session_id,
+                "stripe_payment_intent_id": payment.stripe_payment_intent_id,
+                "paid_at": payment.paid_at,
+                "created_at": payment.created_at,
+            }
+        )
+
     return {
-        "data": payments,
+        "data": results,
         "meta": {
             "total": total,
             "page": page,
