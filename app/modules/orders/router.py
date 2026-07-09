@@ -16,6 +16,9 @@ from app.modules.orders.schemas import (
 from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import Subscription, SubscriptionStatus, PaymentStatus
 from app.modules.users.models import User, UserRole
+from app.modules.payments.models import Payment
+from app.modules.deliveries.models import Delivery
+
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -106,6 +109,7 @@ def create_order_from_subscription(
 
     return order
 
+
 @router.get("/my", response_model=list[OrderResponse])
 def my_orders(
     db: Session = Depends(get_db),
@@ -181,11 +185,39 @@ def list_orders(
         if subscription:
             plan = db.query(MealPlan).filter(MealPlan.id == subscription.plan_id).first()
 
+        payment = (
+            db.query(Payment)
+            .filter(Payment.subscription_id == order.subscription_id)
+            .order_by(Payment.id.desc())
+            .first()
+        )
+
+        delivery = (
+            db.query(Delivery)
+            .filter(Delivery.order_id == order.id)
+            .order_by(Delivery.id.desc())
+            .first()
+        )
+
+        driver = None
+        if delivery and delivery.driver_id:
+            driver = db.query(User).filter(User.id == delivery.driver_id).first()
+
+        payment_status = None
+        if payment:
+            payment_status = payment.status
+        elif subscription:
+            payment_status = (
+                subscription.payment_status.value
+                if hasattr(subscription.payment_status, "value")
+                else subscription.payment_status
+            )
+
         results.append(
             {
                 "id": order.id,
                 "order_number": order.order_number,
-                "status": order.status.value if hasattr(order.status, "value") else order.status,
+                "order_status": order.status.value if hasattr(order.status, "value") else order.status,
                 "total_amount": order.total_amount,
                 "delivery_date": order.delivery_date,
                 "delivery_address": order.delivery_address,
@@ -221,7 +253,9 @@ def list_orders(
 
                 "plan": {
                     "id": plan.id if plan else None,
+                    "name": plan.name_en if plan else None,
                     "name_en": plan.name_en if plan else None,
+                    "name_ar": plan.name_ar if plan else None,
                     "plan_type": (
                         plan.plan_type.value
                         if plan and hasattr(plan.plan_type, "value")
@@ -236,6 +270,41 @@ def list_orders(
                     "meals_per_day": plan.meals_per_day if plan else None,
                     "total_meals": plan.total_meals if plan else None,
                 },
+
+                "payment": {
+                    "id": payment.id if payment else None,
+                    "status": payment_status,
+                    "provider": payment.provider if payment else None,
+                    "amount": payment.amount if payment else order.total_amount,
+                    "currency": payment.currency if payment else "usd",
+                    "paid_at": payment.paid_at if payment else None,
+                    "stripe_payment_intent_id": (
+                        payment.stripe_payment_intent_id if payment else None
+                    ),
+                },
+
+                "delivery": {
+                    "id": delivery.id if delivery else None,
+                    "status": (
+                        delivery.status.value
+                        if delivery and hasattr(delivery.status, "value")
+                        else delivery.status if delivery else None
+                    ),
+                    "scheduled_at": delivery.scheduled_at if delivery else None,
+                    "picked_up_at": delivery.picked_up_at if delivery else None,
+                    "delivered_at": delivery.delivered_at if delivery else None,
+                    "current_latitude": delivery.current_latitude if delivery else None,
+                    "current_longitude": delivery.current_longitude if delivery else None,
+                },
+
+                "driver": {
+                    "id": driver.id if driver else None,
+                    "first_name": driver.first_name if driver else None,
+                    "last_name": driver.last_name if driver else None,
+                    "full_name": f"{driver.first_name} {driver.last_name}" if driver else None,
+                    "email": driver.email if driver else None,
+                    "phone": driver.phone if driver else None,
+                } if driver else None,
             }
         )
 
