@@ -289,3 +289,4 @@ def change_password(
     db.refresh(current_user)
 
     return {"message": "Password changed successfully"}
+
