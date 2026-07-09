@@ -18,7 +18,7 @@ from app.modules.subscriptions.models import (
     Subscription,
     SubscriptionStatus,
 )
-from app.modules.users.models import User, UserRole
+from app.modules.users.models import User, UserRole, MealPlan
 
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -186,36 +186,79 @@ def list_payments(
     results = []
 
     for payment in payments:
-        user = db.query(User).filter(User.id == payment.user_id).first()
+
+        user = (
+            db.query(User)
+            .filter(User.id == payment.user_id)
+            .first()
+        )
+
+        subscription = (
+            db.query(Subscription)
+            .filter(Subscription.id == payment.subscription_id)
+            .first()
+        )
+
+        plan = None
+
+        if subscription:
+            plan = (
+                db.query(MealPlan)
+                .filter(MealPlan.id == subscription.plan_id)
+                .first()
+            )
 
         results.append(
             {
                 "id": payment.id,
-                "user_id": payment.user_id,
-                "user": {
+
+                "customer": {
                     "id": user.id if user else None,
                     "first_name": user.first_name if user else None,
                     "last_name": user.last_name if user else None,
                     "full_name": (
                         f"{user.first_name} {user.last_name}"
-                        if user
-                        else None
+                        if user else None
                     ),
                     "email": user.email if user else None,
                     "phone": user.phone if user else None,
                     "role": user.role.value if user else None,
                     "is_verified": user.is_verified if user else None,
                 },
-                "subscription_id": payment.subscription_id,
-                "provider": payment.provider,
-                "status": payment.status,
-                "amount": payment.amount,
-                "currency": payment.currency,
-                "checkout_url": payment.checkout_url,
-                "stripe_checkout_session_id": payment.stripe_checkout_session_id,
-                "stripe_payment_intent_id": payment.stripe_payment_intent_id,
-                "paid_at": payment.paid_at,
-                "created_at": payment.created_at,
+
+                "subscription": {
+                    "id": subscription.id if subscription else None,
+                    "plan_id": subscription.plan_id if subscription else None,
+                    "plan_name": plan.name_en if plan else None,
+                    "status": (
+                        subscription.status.value
+                        if subscription else None
+                    ),
+                    "payment_status": (
+                        subscription.payment_status.value
+                        if subscription else None
+                    ),
+                    "start_date": (
+                        subscription.start_date
+                        if subscription else None
+                    ),
+                    "end_date": (
+                        subscription.end_date
+                        if subscription else None
+                    ),
+                },
+
+                "payment": {
+                    "provider": payment.provider,
+                    "status": payment.status,
+                    "amount": payment.amount,
+                    "currency": payment.currency,
+                    "paid_at": payment.paid_at,
+                    "created_at": payment.created_at,
+                    "checkout_url": payment.checkout_url,
+                    "stripe_checkout_session_id": payment.stripe_checkout_session_id,
+                    "stripe_payment_intent_id": payment.stripe_payment_intent_id,
+                },
             }
         )
 
