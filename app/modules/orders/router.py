@@ -146,8 +146,81 @@ def list_orders(
         .all()
     )
 
+    results = []
+
+    for order in orders:
+        user = db.query(User).filter(User.id == order.user_id).first()
+
+        subscription = (
+            db.query(Subscription)
+            .filter(Subscription.id == order.subscription_id)
+            .first()
+        )
+
+        plan = None
+        if subscription:
+            plan = db.query(MealPlan).filter(MealPlan.id == subscription.plan_id).first()
+
+        results.append(
+            {
+                "id": order.id,
+                "order_number": order.order_number,
+                "status": order.status.value if hasattr(order.status, "value") else order.status,
+                "total_amount": order.total_amount,
+                "delivery_date": order.delivery_date,
+                "delivery_address": order.delivery_address,
+                "delivery_notes": order.delivery_notes,
+                "items": order.items,
+                "created_at": order.created_at,
+
+                "customer": {
+                    "id": user.id if user else None,
+                    "first_name": user.first_name if user else None,
+                    "last_name": user.last_name if user else None,
+                    "full_name": f"{user.first_name} {user.last_name}" if user else None,
+                    "email": user.email if user else None,
+                    "phone": user.phone if user else None,
+                },
+
+                "subscription": {
+                    "id": subscription.id if subscription else None,
+                    "status": (
+                        subscription.status.value
+                        if subscription and hasattr(subscription.status, "value")
+                        else subscription.status if subscription else None
+                    ),
+                    "payment_status": (
+                        subscription.payment_status.value
+                        if subscription and hasattr(subscription.payment_status, "value")
+                        else subscription.payment_status if subscription else None
+                    ),
+                    "amount": subscription.amount if subscription else None,
+                    "start_date": subscription.start_date if subscription else None,
+                    "end_date": subscription.end_date if subscription else None,
+                },
+
+                "plan": {
+                    "id": plan.id if plan else None,
+                    "name_en": plan.name_en if plan else None,
+                    "plan_type": (
+                        plan.plan_type.value
+                        if plan and hasattr(plan.plan_type, "value")
+                        else plan.plan_type if plan else None
+                    ),
+                    "goal": (
+                        plan.goal.value
+                        if plan and hasattr(plan.goal, "value")
+                        else plan.goal if plan else None
+                    ),
+                    "duration_days": plan.duration_days if plan else None,
+                    "meals_per_day": plan.meals_per_day if plan else None,
+                    "total_meals": plan.total_meals if plan else None,
+                },
+            }
+        )
+
     return {
-        "data": orders,
+        "data": results,
         "meta": {
             "total": total,
             "page": page,
