@@ -14,9 +14,8 @@ from app.modules.orders.schemas import (
     OrderStatusUpdate,
 )
 from app.modules.plans.models import MealPlan
-from app.modules.subscriptions.models import Subscription, SubscriptionStatus
+from app.modules.subscriptions.models import Subscription, SubscriptionStatus, PaymentStatus
 from app.modules.users.models import User, UserRole
-
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -43,20 +42,40 @@ def create_order_from_subscription(
     if current_user.role == UserRole.CUSTOMER and subscription.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not allowed")
 
-    if subscription.status not in [
-        SubscriptionStatus.PENDING_PAYMENT,
-        SubscriptionStatus.ACTIVE,
-        SubscriptionStatus.PAUSED,
-    ]:
+    if subscription.status != SubscriptionStatus.ACTIVE:
         raise HTTPException(
             status_code=400,
-            detail="Cannot create order from this subscription status",
+            detail="Cannot create order because subscription is not active",
+        )
+
+    if subscription.payment_status != PaymentStatus.PAID:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot create order before subscription payment is completed",
         )
 
     plan = db.query(MealPlan).filter(MealPlan.id == subscription.plan_id).first()
 
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
+
+    existing_order = (
+        db.query(Order)
+        .filter(
+            Order.subscription_id == subscription.id,
+            Order.status.notin_([
+                OrderStatus.CANCELLED,
+                OrderStatus.DELIVERED,
+            ]),
+        )
+        .first()
+    )
+
+    if existing_order:
+        raise HTTPException(
+            status_code=400,
+            detail="This subscription already has an active order",
+        )
 
     order = Order(
         user_id=subscription.user_id,
@@ -75,6 +94,8 @@ def create_order_from_subscription(
                 "duration_days": plan.duration_days,
                 "meals_per_day": plan.meals_per_day,
                 "total_meals": plan.total_meals,
+                "payment_status": subscription.payment_status.value,
+                "subscription_status": subscription.status.value,
             }
         ],
     )
@@ -84,7 +105,6 @@ def create_order_from_subscription(
     db.refresh(order)
 
     return order
-
 
 @router.get("/my", response_model=list[OrderResponse])
 def my_orders(
