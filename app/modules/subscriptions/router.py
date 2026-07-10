@@ -29,10 +29,6 @@ def enum_value(value):
     return value.value if hasattr(value, "value") else value
 
 
-# =========================================================
-# CREATE SUBSCRIPTION
-# =========================================================
-
 @router.post("/", response_model=SubscriptionResponse)
 def create_subscription(
     payload: SubscriptionCreate,
@@ -97,11 +93,6 @@ def create_subscription(
 
     return subscription
 
-
-# =========================================================
-# CUSTOMER SUBSCRIPTIONS
-# =========================================================
-
 @router.get("/my", response_model=list[SubscriptionResponse])
 def my_subscriptions(
     db: Session = Depends(get_db),
@@ -113,11 +104,6 @@ def my_subscriptions(
         .order_by(Subscription.id.desc())
         .all()
     )
-
-
-# =========================================================
-# ADMIN LIST SUBSCRIPTIONS
-# =========================================================
 
 @router.get("/")
 def list_subscriptions(
@@ -260,11 +246,6 @@ def list_subscriptions(
         },
     }
 
-
-# =========================================================
-# GET ONE SUBSCRIPTION
-# =========================================================
-
 @router.get("/{subscription_id}", response_model=SubscriptionResponse)
 def get_subscription(
     subscription_id: int,
@@ -293,11 +274,6 @@ def get_subscription(
         )
 
     return subscription
-
-
-# =========================================================
-# ADMIN UPDATE SUBSCRIPTION
-# =========================================================
 
 @router.patch(
     "/{subscription_id}",
@@ -358,11 +334,6 @@ def admin_update_subscription(
     db.refresh(subscription)
 
     return subscription
-
-
-# =========================================================
-# CANCEL SUBSCRIPTION
-# =========================================================
 
 @router.post(
     "/{subscription_id}/cancel",
