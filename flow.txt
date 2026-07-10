@@ -1,0 +1,1168 @@
+NutrioMeals Business Process
+
+Below is the complete business flow your backend currently supports, from user registration through subscription, payment, orders, delivery, administration, nutrition management, and reporting.
+
+1. Customer Registration and Authentication
+Step 1: Customer creates an account
+
+The frontend sends:
+
+POST /auth/register
+
+The user provides information such as:
+
+{
+  "first_name": "Adam",
+  "last_name": "Katani",
+  "email": "adam@example.com",
+  "phone": "+255700000000",
+  "password": "StrongPassword123",
+  "location": "Dar es Salaam",
+  "address": "Kinondoni",
+  "gender": "male",
+  "age": 25,
+  "height_cm": 175,
+  "weight_kg": 70,
+  "fitness_goal": "weight_loss",
+  "dietary_preference": "high_protein",
+  "allergies": ["nuts", "dairy"]
+}
+
+The backend:
+
+Checks whether the email already exists.
+Checks whether the phone number already exists.
+Hashes the password.
+Creates the user with the customer role.
+Generates a secure OTP.
+Stores the OTP and expiration time.
+Sends the OTP to the customer’s email.
+Marks the account as unverified.
+
+The user cannot fully access the system until the email is verified.
+
+Step 2: Customer verifies email
+
+The frontend sends:
+
+POST /auth/verify-email
+
+Payload:
+
+{
+  "email": "adam@example.com",
+  "otp": "123456"
+}
+
+The backend:
+
+Finds the user.
+Checks whether the OTP matches.
+Checks whether the OTP has expired.
+Marks the user as verified.
+Removes the used OTP.
+
+After this, the user can log in.
+
+Step 3: Resend verification OTP
+
+When the OTP expires or is not received:
+
+POST /auth/resend-verification-otp
+
+The backend:
+
+Finds the account.
+Generates a new OTP.
+Sets a new expiration time.
+Sends a new verification email.
+
+This endpoint should be protected by rate limiting.
+
+Step 4: Customer logs in
+
+The frontend sends:
+
+POST /auth/login
+
+Payload:
+
+{
+  "email": "adam@example.com",
+  "password": "StrongPassword123"
+}
+
+The backend:
+
+Finds the user.
+Verifies the password.
+Confirms that the account is verified.
+Generates a JWT access token.
+Returns the user profile.
+Returns the user role.
+Returns assigned permissions.
+Returns the latest active or pending subscription.
+
+The response can include:
+
+{
+  "access_token": "...",
+  "user": {
+    "id": 12,
+    "first_name": "Adam",
+    "last_name": "Katani",
+    "email": "adam@example.com",
+    "role": "customer",
+    "permissions": [],
+    "subscription": null
+  }
+}
+
+The frontend stores the JWT and sends it with protected requests:
+
+Authorization: Bearer ACCESS_TOKEN
+Step 5: Customer views own account
+GET /auth/me
+
+This returns:
+
+Personal details
+Role
+Permissions
+Fitness details
+Allergies
+Current subscription
+Step 6: Customer updates profile
+GET /profile/
+PUT /profile/
+
+The user can update information such as:
+
+Location
+Delivery address
+Weight
+Height
+Fitness goal
+Dietary preference
+Allergies
+
+This information can later help nutrition managers choose suitable meals.
+
+2. Password Recovery
+Forgot password
+POST /auth/forgot-password
+
+The backend:
+
+Accepts an email.
+Returns a generic response whether the account exists or not.
+Generates a password-reset OTP for an existing account.
+Sends the OTP by email.
+Stores an expiration time.
+
+Recommended response:
+
+{
+  "message": "If the account exists, a password reset email has been sent."
+}
+Reset password
+POST /auth/reset-password
+
+Payload:
+
+{
+  "email": "adam@example.com",
+  "otp": "123456",
+  "new_password": "NewStrongPassword123"
+}
+
+The backend:
+
+Checks the OTP.
+Checks expiration.
+Hashes the new password.
+Replaces the old password.
+Clears the reset OTP.
+Change password while logged in
+POST /auth/change-password
+
+The user provides:
+
+Old password
+New password
+
+The backend verifies the old password before updating it.
+
+3. Roles and Permissions
+
+Your system supports roles such as:
+
+customer
+admin
+super_admin
+nutrition_manager
+delivery_manager
+driver
+finance_manager
+Role management
+
+Admin or super admin can:
+
+POST /rbac/roles
+GET /rbac/roles
+POST /rbac/permissions
+GET /rbac/permissions
+POST /rbac/assign-role
+POST /rbac/assign-permission
+
+The process is:
+
+Create roles.
+Create permissions.
+Assign permissions to roles.
+Assign roles to users.
+Return permissions during login.
+Frontend displays only pages the user is allowed to access.
+
+Example permission codes:
+
+meals.create
+meals.update
+plans.create
+subscriptions.view
+payments.view
+drivers.manage
+deliveries.assign
+4. Meal Category Management
+
+Admin or authorized staff manages categories.
+
+Endpoints:
+
+POST   /meal-categories/
+GET    /meal-categories/
+GET    /meal-categories/{category_id}
+PUT    /meal-categories/{category_id}
+DELETE /meal-categories/{category_id}
+
+Examples of categories:
+
+Breakfast
+Lunch
+Dinner
+Snacks
+
+Each category can have:
+
+English name
+Arabic name
+Description
+Image
+Active status
+
+The frontend uses these categories to group meals.
+
+5. Meal Management
+
+Admin or nutrition staff manages meals.
+
+Endpoints:
+
+POST   /meals/
+GET    /meals/
+GET    /meals/{meal_id}
+PUT    /meals/{meal_id}
+DELETE /meals/{meal_id}
+
+Each meal can contain:
+
+English and Arabic names
+Description
+Category
+Calories
+Protein
+Carbohydrates
+Fat
+Fiber
+Sugar
+Sodium
+Price
+Image
+Ingredients
+Allergens
+Diet tags
+Availability
+
+Example:
+
+{
+  "name_en": "Grilled Chicken Bowl",
+  "calories": 520,
+  "protein_g": 45,
+  "carbs_g": 40,
+  "fat_g": 15,
+  "diet_tags": ["high_protein", "muscle_gain"]
+}
+
+The frontend displays meals using category images and meal images.
+
+6. File and Image Uploads
+
+The system supports image uploads, including multiple images.
+
+The flow is:
+
+Admin uploads one or more images.
+Backend stores them.
+Backend returns image URLs.
+Frontend stores those URLs when creating categories, meals, or plans.
+Later GET endpoints return each item with its own image URL.
+
+This can be used for:
+
+Meal images
+Category images
+Plan images
+Promotional banners
+7. Subscription Plan Management
+
+Admin manages subscription packages.
+
+Endpoints:
+
+POST   /plans/
+GET    /plans/
+GET    /plans/{plan_id}
+PUT    /plans/{plan_id}
+DELETE /plans/{plan_id}
+
+A plan contains:
+
+English and Arabic name
+Description
+Type
+Goal
+Price
+Duration
+Meals per day
+Total meals
+Image
+Active status
+
+Examples:
+
+Weight Loss Weekly Plan
+Muscle Gain Monthly Plan
+Healthy Lifestyle Plan
+Family Plan
+Corporate Plan
+
+The frontend calls:
+
+GET /plans/
+
+and displays available packages to the customer.
+
+8. Meal Plan Items
+
+Admin or nutrition staff assigns meals to each plan and day.
+
+The system connects:
+
+Plan → Day → Meal time → Meal
+
+Example:
+
+Weight Loss Weekly Plan
+
+Day 1
+Breakfast → Oats Banana Bowl
+Lunch → Grilled Chicken Rice
+Dinner → Salmon Sweet Potato
+
+This defines what meals are available inside a subscription plan.
+
+9. Customer Subscription Flow
+Step 1: Customer selects a plan
+
+The customer browses:
+
+GET /plans/
+
+The frontend displays plan cards with:
+
+Plan name
+Price
+Duration
+Goal
+Number of meals
+Image
+Step 2: Customer creates a subscription
+POST /subscriptions/
+
+Payload:
+
+{
+  "plan_id": 1,
+  "notes": "No peanuts"
+}
+
+The backend:
+
+Checks whether the plan exists.
+Checks whether it is active.
+Checks whether the customer already has an active, paused, or pending subscription.
+Creates the subscription.
+Sets:
+status = pending_payment
+payment_status = unpaid
+
+No order should be created yet.
+
+Step 3: Customer views own subscriptions
+GET /subscriptions/my
+
+The customer sees:
+
+Plan ID
+Subscription status
+Payment status
+Amount
+Start date
+End date
+
+Before payment:
+
+{
+  "status": "pending_payment",
+  "payment_status": "unpaid"
+}
+Step 4: Admin views subscriptions
+GET /subscriptions/
+
+The admin receives:
+
+Customer name
+Customer email
+Customer phone
+Plan information
+Subscription status
+Payment status
+Start and end dates
+Amount
+
+This helps the admin know who subscribed to which plan.
+
+Step 5: Cancel subscription
+POST /subscriptions/{subscription_id}/cancel
+
+The backend:
+
+Confirms access.
+Changes status to cancelled.
+Stores cancelled_at.
+10. Stripe Payment Process
+Step 1: Customer creates checkout
+POST /payments/create-checkout
+
+Payload:
+
+{
+  "subscription_id": 5
+}
+
+The backend:
+
+Verifies that the subscription belongs to the logged-in user.
+Verifies that it is not already paid.
+Creates a local payment record.
+Sets payment status to pending.
+Creates a Stripe Checkout Session.
+Returns a Stripe checkout URL.
+
+Response:
+
+{
+  "payment_id": 8,
+  "checkout_url": "https://checkout.stripe.com/...",
+  "stripe_checkout_session_id": "cs_test_..."
+}
+Step 2: Frontend redirects to Stripe
+
+The customer opens checkout_url.
+
+Stripe collects card details securely.
+
+The backend does not store card numbers.
+
+Step 3: Stripe payment succeeds
+
+Stripe redirects the user to:
+
+FRONTEND_SUCCESS_URL
+
+Example:
+
+https://nutriomeals.com/payment-success
+?session_id=cs_test_xxx
+&payment_id=8
+Step 4: Frontend verifies payment
+
+The frontend reads session_id and calls:
+
+GET /payments/verify-session/{session_id}
+
+The backend:
+
+Retrieves the Checkout Session from Stripe.
+Confirms payment_status == paid.
+Finds the local payment.
+Sets payment status to paid.
+Saves the Stripe payment intent ID.
+Sets paid_at.
+Updates the subscription:
+status = active
+payment_status = paid
+Sets subscription start and end dates.
+Step 5: Stripe webhook backup
+POST /payments/webhook/stripe
+
+The webhook performs the same payment activation even if the customer closes the browser before returning to the frontend.
+
+This makes payment processing reliable.
+
+Step 6: Customer views own payments
+GET /payments/my
+
+The customer sees their payment history.
+
+Step 7: Admin views all payments
+GET /payments/
+
+The response includes:
+
+Customer details
+Subscription details
+Plan name
+Payment provider
+Amount
+Currency
+Payment status
+Paid date
+Stripe references
+
+Finance managers can filter paid, failed, or pending payments.
+
+11. Coupon and Promotion Flow
+
+Admin or finance manager creates coupons.
+
+Endpoints:
+
+POST   /coupons/
+GET    /coupons/
+GET    /coupons/{coupon_id}
+PUT    /coupons/{coupon_id}
+DELETE /coupons/{coupon_id}
+POST   /coupons/validate
+
+A coupon can contain:
+
+Code
+Percentage or fixed discount
+Discount value
+Minimum order amount
+Maximum uses
+Start date
+Expiry date
+Active status
+
+Example:
+
+WELCOME20
+RAMADAN30
+
+The customer enters a coupon before checkout.
+
+The frontend calls:
+
+POST /coupons/validate
+
+The backend returns:
+
+Original amount
+Discount
+Final amount
+Coupon validity
+
+The checkout amount should eventually use the discounted amount.
+
+12. Order Creation Process
+
+An order should only be created after successful payment.
+
+Endpoint:
+
+POST /orders/from-subscription
+
+The backend verifies:
+
+subscription.status = active
+subscription.payment_status = paid
+
+It then:
+
+Loads the subscription plan.
+Checks that no active order already exists.
+Generates an order number.
+Creates an order.
+Sets status to pending.
+Sets the delivery date.
+Copies the delivery address.
+Stores plan details inside the order items.
+
+Example order number:
+
+ORD-20260710-A1B2C3D4
+13. Customer Order Management
+View own orders
+GET /orders/my
+
+The customer sees only their own orders.
+
+Cancel order
+POST /orders/{order_id}/cancel
+
+An order cannot be cancelled after it is delivered or already out for delivery.
+
+14. Admin Order Management
+GET /orders/
+
+The admin receives a complete response containing:
+
+Order information
+Customer details
+Subscription details
+Plan details
+Payment details
+Delivery details
+Driver details
+
+The admin order page can display:
+
+Order Number
+Customer
+Email
+Phone
+Plan
+Payment Status
+Amount
+Order Status
+Delivery Date
+Driver
+
+Admin or delivery manager can update status:
+
+PATCH /orders/{order_id}/status
+
+Typical statuses:
+
+pending
+processing
+out_for_delivery
+delivered
+cancelled
+15. Driver Management
+
+Admin and super admin manage driver accounts.
+
+Endpoints:
+
+POST   /driver/admin
+GET    /driver/admin
+GET    /driver/admin/{driver_id}
+PUT    /driver/admin/{driver_id}
+DELETE /driver/admin/{driver_id}
+
+Creating a driver creates a user with:
+
+role = driver
+
+The driver receives:
+
+User ID
+Email
+Phone
+Password
+Active status
+
+The frontend uses:
+
+GET /driver/admin
+
+to populate a driver dropdown when assigning deliveries.
+
+Deleting a driver currently performs a soft delete:
+
+is_active = false
+16. Delivery Management
+
+A delivery connects:
+
+Order → Customer → Driver
+
+A delivery contains:
+
+Order ID
+Customer ID
+Driver ID
+Delivery address
+Delivery status
+Scheduled time
+Pickup time
+Delivery time
+Current location
+Failure reason
+
+Admin or delivery manager assigns a driver using the driver’s user ID.
+
+17. Driver App Flow
+Step 1: Driver logs in
+
+The driver uses the normal login endpoint:
+
+POST /auth/login
+
+The returned role is:
+
+driver
+
+The frontend opens the driver dashboard.
+
+Step 2: Driver views assigned deliveries
+GET /driver/deliveries
+
+The backend filters:
+
+Delivery.driver_id == current_user.id
+
+Therefore, each driver only sees their own deliveries.
+
+Step 3: Driver views one delivery
+GET /driver/deliveries/{delivery_id}
+
+The backend confirms that the delivery belongs to that driver.
+
+Step 4: Driver picks up the order
+POST /driver/deliveries/{delivery_id}/pickup
+
+The backend:
+
+Changes delivery status to picked_up.
+Stores pickup time.
+Updates order status.
+Step 5: Driver starts delivery
+POST /driver/deliveries/{delivery_id}/out-for-delivery
+
+The backend changes:
+
+delivery.status = out_for_delivery
+order.status = out_for_delivery
+Step 6: Driver sends location
+PATCH /driver/deliveries/{delivery_id}/location
+
+Payload:
+
+{
+  "latitude": -6.7924,
+  "longitude": 39.2083
+}
+
+The customer frontend can use these coordinates for live tracking.
+
+Step 7: Driver completes delivery
+POST /driver/deliveries/{delivery_id}/complete
+
+The backend:
+
+Sets delivery status to delivered.
+Stores delivery time.
+Sets order status to delivered.
+Step 8: Driver reports failure
+POST /driver/deliveries/{delivery_id}/fail?reason=Customer unavailable
+
+The backend:
+
+Sets delivery status to failed.
+Stores the failure reason.
+18. Nutrition Manager Flow
+
+Nutrition roles include:
+
+nutrition_manager
+admin
+super_admin
+
+Endpoints:
+
+GET    /nutrition/customers
+GET    /nutrition/customers/{user_id}/subscriptions
+GET    /nutrition/subscriptions/{subscription_id}/meal-selections
+POST   /nutrition/subscriptions/{subscription_id}/assign-meal
+PATCH  /nutrition/meal-selections/{selection_id}
+DELETE /nutrition/meal-selections/{selection_id}
+
+The nutrition manager can:
+
+View customers.
+Search by name, email, or phone.
+View a customer’s subscriptions.
+View assigned meals.
+Assign meals for a particular day and meal time.
+Replace a meal.
+Delete an incorrect selection.
+Ensure the selected meal belongs to the customer’s plan.
+
+This supports personalized nutrition plans.
+
+19. Meal Selection Flow
+
+The meal selection system connects:
+
+Customer
+Subscription
+Plan
+Meal
+Day number
+Meal time
+
+Example:
+
+Customer Adam
+Subscription 5
+Day 3
+Lunch
+Meal: Grilled Chicken Rice
+
+The system prevents duplicate selections for the same day and meal time.
+
+20. Notifications
+
+The system supports notification types such as:
+
+general
+order
+delivery
+subscription
+payment
+promotion
+
+Channels include:
+
+in_app
+email
+sms
+whatsapp
+
+The notification process can be used for:
+
+Welcome message
+Payment success
+Subscription activated
+Order created
+Driver assigned
+Order out for delivery
+Delivery completed
+Subscription expiring
+Promotions
+
+Customers can:
+
+View notifications
+Mark notifications as read
+Delete notifications
+21. Reviews
+
+Customers can review:
+
+Meals
+Plans
+Orders
+Deliveries
+
+Endpoints include:
+
+POST   /reviews/
+GET    /reviews/my
+GET    /reviews/
+GET    /reviews/{review_id}
+PUT    /reviews/{review_id}
+DELETE /reviews/{review_id}
+
+The review contains:
+
+Rating from 1 to 5
+Comment
+Related meal, plan, order, or delivery
+Customer ID
+Creation date
+
+Admin can view reviews and filter by meal, plan, or rating.
+
+22. Reports
+
+Your reports module provides operational summaries without necessarily requiring a separate model.
+
+Reports can include:
+
+Revenue
+Payments
+Orders
+Subscriptions
+Meals
+Deliveries
+Drivers
+
+These can later be exported to:
+
+CSV
+Excel
+PDF
+23. Admin Dashboard
+
+Endpoint:
+
+GET /dashboard/admin
+
+The dashboard aggregates data from all modules.
+
+Summary cards
+
+It can return:
+
+Total revenue
+Revenue today
+Revenue this month
+Total customers
+Active subscriptions
+Total orders
+Pending orders
+Active deliveries
+User statistics
+Total users
+Customers
+Drivers
+Active drivers
+New users today
+Subscription statistics
+Total
+Active
+Pending payment
+Paused
+Cancelled
+Paid
+Unpaid
+Payment statistics
+Successful
+Pending
+Failed
+Total revenue
+Today’s revenue
+Monthly revenue
+Order statistics
+Total
+Today
+Pending
+Out for delivery
+Delivered
+Cancelled
+Delivery statistics
+Pending
+Assigned
+Active
+Delivered
+Failed
+Unassigned
+Catalog statistics
+Meal categories
+Meals available
+Meals unavailable
+Plans active
+Plans inactive
+Recent activity
+Recent payments
+Recent orders
+Recent subscriptions
+Popular plans
+
+Shows the plans with the highest subscription counts.
+
+24. Complete Customer Journey
+
+The full customer process is:
+
+Register
+↓
+Receive email OTP
+↓
+Verify email
+↓
+Login
+↓
+Complete or update profile
+↓
+Browse meal categories
+↓
+Browse meals
+↓
+Browse subscription plans
+↓
+Choose a plan
+↓
+Create subscription
+↓
+Subscription becomes pending payment
+↓
+Create Stripe checkout
+↓
+Pay through Stripe
+↓
+Frontend verifies Stripe session
+↓
+Subscription becomes paid and active
+↓
+Create order from subscription
+↓
+Admin sees order
+↓
+Delivery is created
+↓
+Admin assigns a driver
+↓
+Driver picks up order
+↓
+Driver starts delivery
+↓
+Customer tracks delivery
+↓
+Driver marks order delivered
+↓
+Customer receives notification
+↓
+Customer reviews meal, plan, order, or delivery
+25. Complete Admin Journey
+
+The admin process is:
+
+Admin logs in
+↓
+Views admin dashboard
+↓
+Manages users, roles, and permissions
+↓
+Creates meal categories
+↓
+Creates meals
+↓
+Uploads meal and category images
+↓
+Creates plans
+↓
+Assigns meals to plan days
+↓
+Views subscriptions
+↓
+Views customer and plan details
+↓
+Views payments
+↓
+Confirms paid subscriptions
+↓
+Views and manages orders
+↓
+Creates or manages drivers
+↓
+Assigns drivers to deliveries
+↓
+Monitors delivery progress
+↓
+Creates coupons
+↓
+Views reviews
+↓
+Views reports and analytics
+26. Complete Driver Journey
+Driver account created by admin
+↓
+Driver logs in
+↓
+Views assigned deliveries
+↓
+Opens delivery details
+↓
+Picks up meal order
+↓
+Marks order out for delivery
+↓
+Updates GPS location
+↓
+Completes delivery
+or
+Reports failed delivery
+27. Complete Nutrition Manager Journey
+Nutrition manager logs in
+↓
+Views customers
+↓
+Opens customer profile
+↓
+Reviews fitness goal and allergies
+↓
+Views active subscription
+↓
+Views available plan meals
+↓
+Assigns meals by day and meal time
+↓
+Replaces unsuitable meals
+↓
+Removes incorrect selections
+28. Complete Finance Manager Journey
+Finance manager logs in
+↓
+Views dashboard revenue
+↓
+Views all payments
+↓
+Filters paid, pending, or failed payments
+↓
+Views customer and subscription details
+↓
+Views order values
+↓
+Manages coupons
+↓
+Reviews financial reports
+Current System Status
+
+Your core business flow is now largely complete:
+
+Authentication
+Email verification
+Profiles
+Roles and permissions
+Categories and meals
+Plans and meal plan items
+Subscriptions
+Stripe payments
+Orders
+Drivers
+Deliveries
+Nutrition management
+Notifications
+Coupons
+Reviews
+Reports
+Admin dashboard
+
+The main remaining improvements are operational enhancements such as scheduled jobs, push notifications, automatic order generation, refunds, favorites, richer analytics, and automated subscription expiration.
