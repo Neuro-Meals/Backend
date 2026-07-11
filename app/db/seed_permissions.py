@@ -1,7 +1,7 @@
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.database import SessionLocal
-from app.modules.users.models import Permission
+from app.modules.users.rbac_models import Permission
 
 
 PERMISSIONS = [
