@@ -1,5 +1,10 @@
-PERMISSIONS = [
+from sqlalchemy.exc import SQLAlchemyError
 
+from app.db.database import SessionLocal
+from app.modules.users.models import Permission
+
+
+PERMISSIONS = [
     # Dashboard
     ("dashboard.view", "View dashboard"),
 
@@ -56,7 +61,7 @@ PERMISSIONS = [
     ("payments.refund", "Refund payments"),
     ("payments.export", "Export payment reports"),
 
-    # Delivery
+    # Deliveries
     ("deliveries.view", "View deliveries"),
     ("deliveries.assign", "Assign driver"),
     ("deliveries.update", "Update delivery"),
@@ -100,5 +105,61 @@ PERMISSIONS = [
     # Settings
     ("settings.view", "View settings"),
     ("settings.update", "Update settings"),
-
 ]
+
+
+def seed_permissions() -> None:
+    db = SessionLocal()
+
+    try:
+        created_count = 0
+        updated_count = 0
+        skipped_count = 0
+
+        for code, description in PERMISSIONS:
+            permission = (
+                db.query(Permission)
+                .filter(Permission.code == code)
+                .first()
+            )
+
+            if permission:
+                if permission.description != description:
+                    permission.description = description
+                    updated_count += 1
+                else:
+                    skipped_count += 1
+
+                continue
+
+            permission = Permission(
+                code=code,
+                description=description,
+            )
+
+            db.add(permission)
+            created_count += 1
+
+        db.commit()
+
+        print("Permission seeding completed")
+        print(f"Created: {created_count}")
+        print(f"Updated: {updated_count}")
+        print(f"Already existed: {skipped_count}")
+
+    except SQLAlchemyError as exc:
+        db.rollback()
+        print(f"Database error while seeding permissions: {exc}")
+        raise
+
+    except Exception as exc:
+        db.rollback()
+        print(f"Unexpected error while seeding permissions: {exc}")
+        raise
+
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    seed_permissions()
