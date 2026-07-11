@@ -1,5 +1,6 @@
 import requests
 import streamlit as st
+import os
 
 API_BASE = "http://79.108.162.112:8080"
 
@@ -158,9 +159,38 @@ if menu == "Auth":
     with tab5:
         st.subheader("Auth Me")
 
-        if st.button("Get /auth/me"):
-            res = requests.get(f"{API_BASE}/auth/me", headers=headers())
-            show_response(res)
+    if st.button("Get /auth/me"):
+        res = requests.get(f"{API_BASE}/auth/me", headers=headers())
+
+    if res.status_code == 200:
+        data = res.json()
+
+        st.success("Authenticated")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.write("### User")
+            st.write(f"**Name:** {data.get('first_name')} {data.get('last_name')}")
+            st.write(f"**Email:** {data.get('email')}")
+            st.write(f"**Role:** {data.get('role')}")
+
+        with col2:
+            st.write("### Permissions")
+
+            permissions = data.get("permissions", [])
+
+            if permissions:
+                for permission in permissions:
+                    st.success(permission)
+            else:
+                st.warning("No permissions assigned")
+
+        st.divider()
+        st.json(data)
+
+    else:
+        show_response(res)
 
     with tab6:
         st.subheader("Forgot Password")
