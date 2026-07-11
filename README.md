@@ -222,3 +222,21 @@ SELECT * FROM subscriptions;
 ```
 
 
+
+```
+1. Register Tap sandbox account
+2. Obtain test API keys
+3. Make Payment model provider-independent
+4. Add Tap provider service
+5. Replace Stripe create-checkout
+6. Add Tap verification endpoint
+7. Add Tap webhook
+8. Test mada/cards
+9. Enable and test Apple Pay
+10. Decide whether PayPal is through Tap or separate
+11. Obtain live approval and live keys
+12. Run one small live SAR transaction
+
+``
+
+
