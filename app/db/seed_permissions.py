@@ -1,7 +1,5 @@
-from app.db.database import SessionLocal
-from app.modules.rbac.models import Permission
-
 PERMISSIONS = [
+
     # Dashboard
     ("dashboard.view", "View dashboard"),
 
@@ -102,33 +100,5 @@ PERMISSIONS = [
     # Settings
     ("settings.view", "View settings"),
     ("settings.update", "Update settings"),
+
 ]
-
-
-def seed_permissions() -> None:
-    db = SessionLocal()
-    try:
-        created = 0
-        skipped = 0
-
-        for name, description in PERMISSIONS:
-            exists = db.query(Permission).filter(Permission.name == name).first()
-            if exists:
-                skipped += 1
-                continue
-
-            db.add(Permission(name=name, description=description))
-            created += 1
-
-        db.commit()
-        print(f"Seeded permissions: {created} created, {skipped} skipped")
-    except Exception as e:
-        db.rollback()
-        print(f"Seeding failed: {e}")
-        raise
-    finally:
-        db.close()
-
-
-if __name__ == "__main__":
-    seed_permissions()
