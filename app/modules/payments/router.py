@@ -58,10 +58,6 @@ TAP_FAILED_STATUSES = {
 }
 
 
-# -------------------------------------------------------------------
-# Tap helpers
-# -------------------------------------------------------------------
-
 def tap_headers() -> dict[str, str]:
     if not settings.TAP_SECRET_KEY:
         raise HTTPException(
@@ -359,11 +355,6 @@ def find_payment_from_charge(
 
     return None
 
-
-# -------------------------------------------------------------------
-# Customer payment endpoints
-# -------------------------------------------------------------------
-
 @router.post(
     "/create-checkout",
     response_model=CheckoutResponse,
@@ -635,11 +626,6 @@ def verify_tap_charge(
 
     return payment
 
-
-# -------------------------------------------------------------------
-# Tap webhook
-# -------------------------------------------------------------------
-
 @router.post("/webhook/tap")
 async def tap_webhook(
     request: Request,
@@ -729,11 +715,6 @@ async def tap_webhook(
         "tap_charge_id": payment.tap_charge_id,
         "status": payment.status,
     }
-
-
-# -------------------------------------------------------------------
-# Payment history
-# -------------------------------------------------------------------
 
 @router.get(
     "/my",
