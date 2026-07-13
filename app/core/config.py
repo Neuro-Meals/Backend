@@ -23,8 +23,20 @@ class Settings(BaseSettings):
     
     STRIPE_SECRET_KEY: str = ""
     STRIPE_WEBHOOK_SECRET: str = ""
+    # FRONTEND_SUCCESS_URL: str = "https://nutriomeals.com/payment-success"
+    # FRONTEND_CANCEL_URL: str = "https://nutriomeals.com/payment-cancel"
+    
+    TAP_API_URL: str = "https://api.tap.company/v2"
+    TAP_MERCHANT_ID: str = ""
+    TAP_SECRET_KEY: str = ""
+    TAP_PUBLIC_KEY: str = ""
+
+    PAYMENT_CURRENCY: str = "SAR"
+
     FRONTEND_SUCCESS_URL: str = "https://nutriomeals.com/payment-success"
     FRONTEND_CANCEL_URL: str = "https://nutriomeals.com/payment-cancel"
+
+    TAP_WEBHOOK_URL: str = ""
     
     REDIS_URL: str = "redis://localhost:6379/0"
 

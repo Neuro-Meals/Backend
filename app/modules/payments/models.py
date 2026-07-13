@@ -8,6 +8,9 @@ from app.db.database import Base
 
 
 class PaymentProvider(str, Enum):
+    TAP = "tap"
+
+    # Keep temporarily if old Stripe records exist.
     STRIPE = "stripe"
 
 
@@ -21,14 +24,27 @@ class PaymentRecordStatus(str, Enum):
 class Payment(Base):
     __tablename__ = "payments"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    subscription_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        index=True,
+    )
+
+    subscription_id: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        index=True,
+    )
 
     provider: Mapped[str] = mapped_column(
         String(50),
-        default=PaymentProvider.STRIPE.value,
+        default=PaymentProvider.TAP.value,
         nullable=False,
     )
 
@@ -36,21 +52,78 @@ class Payment(Base):
         String(50),
         default=PaymentRecordStatus.PENDING.value,
         nullable=False,
+        index=True,
     )
 
-    amount: Mapped[float] = mapped_column(Float, nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), default="usd", nullable=False)
+    amount: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+    )
 
-    stripe_checkout_session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    currency: Mapped[str] = mapped_column(
+        String(10),
+        default="SAR",
+        nullable=False,
+    )
 
-    checkout_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    # Tap identifiers
+    tap_charge_id: Mapped[str | None] = mapped_column(
+        String(255),
+        unique=True,
+        index=True,
+        nullable=True,
+    )
 
-    paid_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    tap_payment_reference: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    tap_gateway_reference: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    tap_response_code: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    tap_response_message: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    checkout_url: Mapped[str | None] = mapped_column(
+        String(1500),
+        nullable=True,
+    )
+
+    paid_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    # Keep these temporarily so old Stripe data is not destroyed.
+    stripe_checkout_session_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+    )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
+        nullable=False,
     )
