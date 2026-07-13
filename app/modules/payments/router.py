@@ -956,7 +956,6 @@ def complete_upgrade_plan_change(
     plan_change.status = PlanChangeStatus.COMPLETED.value
     plan_change.completed_at = datetime.utcnow()
     
-    
 @router.post(
     "/create-plan-change-checkout",
     response_model=CheckoutResponse,
