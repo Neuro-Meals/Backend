@@ -12,6 +12,10 @@ class CreateCheckoutRequest(BaseModel):
     subscription_id: int
 
 
+class CreatePlanChangeCheckoutRequest(BaseModel):
+    plan_change_id: int
+
+
 class CheckoutResponse(BaseModel):
     payment_id: int
     checkout_url: str
@@ -42,10 +46,5 @@ class PaymentResponse(BaseModel):
     paid_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
-    
-    
-    
-class CreatePlanChangeCheckoutRequest(BaseModel):
-    plan_change_id: int    
 
     model_config = ConfigDict(from_attributes=True)
