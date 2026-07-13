@@ -18,15 +18,19 @@ from app.modules.payments.models import (
     PaymentProvider,
     PaymentRecordStatus,
 )
+
 from app.modules.payments.schemas import (
     CheckoutResponse,
     CreateCheckoutRequest,
+    CreatePlanChangeCheckoutRequest,
     PaymentResponse,
 )
 from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import (
     PaymentStatus,
+    PlanChangeStatus,
     Subscription,
+    SubscriptionPlanChange,
     SubscriptionStatus,
 )
 from app.modules.users.models import User, UserRole
@@ -221,11 +225,20 @@ def update_payment_from_tap_charge(
         if not payment.paid_at:
             payment.paid_at = datetime.utcnow()
 
-        subscription.payment_status = PaymentStatus.PAID
-        subscription.status = SubscriptionStatus.ACTIVE
+        if payment.plan_change_id:
+            complete_upgrade_plan_change(
+            db=db,
+            payment=payment,
+        )
+        else:
+            subscription.payment_status = PaymentStatus.PAID
+            subscription.status = SubscriptionStatus.ACTIVE
 
-        if not subscription.start_date:
-            duration_days = get_plan_duration_days(db, subscription)
+            if not subscription.start_date:
+                duration_days = get_plan_duration_days(
+                db,
+                subscription,
+            )
 
             subscription.start_date = datetime.utcnow()
             subscription.end_date = (
@@ -891,3 +904,250 @@ def list_payments(
             ),
         },
     }
+    
+def complete_upgrade_plan_change(
+    db: Session,
+    payment: Payment,
+) -> None:
+    if not payment.plan_change_id:
+        return
+
+    plan_change = (
+        db.query(SubscriptionPlanChange)
+        .filter(
+            SubscriptionPlanChange.id
+            == payment.plan_change_id
+        )
+        .first()
+    )
+
+    if not plan_change:
+        return
+
+    if plan_change.status == PlanChangeStatus.COMPLETED.value:
+        return
+
+    subscription = (
+        db.query(Subscription)
+        .filter(
+            Subscription.id
+            == plan_change.subscription_id
+        )
+        .first()
+    )
+
+    new_plan = (
+        db.query(MealPlan)
+        .filter(
+            MealPlan.id == plan_change.new_plan_id
+        )
+        .first()
+    )
+
+    if not subscription or not new_plan:
+        plan_change.status = PlanChangeStatus.FAILED.value
+        return
+
+    subscription.plan_id = new_plan.id
+    subscription.amount = float(new_plan.price)
+    subscription.pending_plan_id = None
+    subscription.plan_change_effective_at = None
+
+    plan_change.status = PlanChangeStatus.COMPLETED.value
+    plan_change.completed_at = datetime.utcnow()
+    
+    
+@router.post(
+    "/create-plan-change-checkout",
+    response_model=CheckoutResponse,
+)
+def create_plan_change_checkout(
+    payload: CreatePlanChangeCheckoutRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    plan_change = (
+        db.query(SubscriptionPlanChange)
+        .filter(
+            SubscriptionPlanChange.id
+            == payload.plan_change_id,
+            SubscriptionPlanChange.user_id
+            == current_user.id,
+        )
+        .first()
+    )
+
+    if not plan_change:
+        raise HTTPException(
+            status_code=404,
+            detail="Plan change not found",
+        )
+
+    if (
+        plan_change.status
+        != PlanChangeStatus.PENDING_PAYMENT.value
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="This plan change is not awaiting payment",
+        )
+
+    if plan_change.amount_difference <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="This plan change does not require payment",
+        )
+
+    subscription = (
+        db.query(Subscription)
+        .filter(
+            Subscription.id
+            == plan_change.subscription_id,
+            Subscription.user_id
+            == current_user.id,
+        )
+        .first()
+    )
+
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found",
+        )
+
+    existing_payment = (
+        db.query(Payment)
+        .filter(
+            Payment.plan_change_id == plan_change.id,
+            Payment.user_id == current_user.id,
+            Payment.status
+            == PaymentRecordStatus.PENDING.value,
+        )
+        .order_by(Payment.id.desc())
+        .first()
+    )
+
+    if existing_payment and existing_payment.checkout_url:
+        return CheckoutResponse(
+            payment_id=existing_payment.id,
+            checkout_url=existing_payment.checkout_url,
+            tap_charge_id=existing_payment.tap_charge_id or "",
+            status=existing_payment.status,
+        )
+
+    payment = Payment(
+        user_id=current_user.id,
+        subscription_id=subscription.id,
+        plan_change_id=plan_change.id,
+        provider=PaymentProvider.TAP.value,
+        status=PaymentRecordStatus.PENDING.value,
+        amount=float(plan_change.amount_difference),
+        currency=settings.PAYMENT_CURRENCY.upper(),
+    )
+
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+
+    country_code, phone_number = split_phone_number(
+        current_user.phone
+    )
+
+    tap_payload = {
+        "amount": round(
+            float(plan_change.amount_difference),
+            2,
+        ),
+        "currency": settings.PAYMENT_CURRENCY.upper(),
+        "customer_initiated": True,
+        "threeDSecure": True,
+        "save_card": False,
+        "description": (
+            f"NutrioMeals plan upgrade #{plan_change.id}"
+        ),
+        "statement_descriptor": "NutrioMeals",
+        "metadata": {
+            "payment_id": str(payment.id),
+            "subscription_id": str(subscription.id),
+            "plan_change_id": str(plan_change.id),
+            "user_id": str(current_user.id),
+        },
+        "reference": {
+            "transaction": f"upgrade_payment_{payment.id}",
+            "order": f"plan_change_{plan_change.id}",
+            "idempotent": f"tap_upgrade_{payment.id}",
+        },
+        "receipt": {
+            "email": True,
+            "sms": False,
+        },
+        "customer": {
+            "first_name": current_user.first_name,
+            "last_name": current_user.last_name,
+            "email": current_user.email,
+            "phone": {
+                "country_code": country_code,
+                "number": phone_number,
+            },
+        },
+        "merchant": {
+            "id": settings.TAP_MERCHANT_ID,
+        },
+        "source": {
+            "id": "src_all",
+        },
+        "post": {
+            "url": settings.TAP_WEBHOOK_URL,
+        },
+        "redirect": {
+            "url": settings.FRONTEND_SUCCESS_URL,
+        },
+    }
+
+    try:
+        charge = create_tap_charge(tap_payload)
+
+        charge_id = charge.get("id")
+        transaction = charge.get("transaction") or {}
+        checkout_url = transaction.get("url")
+
+        if not charge_id:
+            raise HTTPException(
+                status_code=502,
+                detail="Tap did not return a charge ID",
+            )
+
+        if not checkout_url:
+            raise HTTPException(
+                status_code=502,
+                detail="Tap did not return a checkout URL",
+            )
+
+        payment.tap_charge_id = charge_id
+        payment.checkout_url = checkout_url
+
+        db.commit()
+        db.refresh(payment)
+
+        return CheckoutResponse(
+            payment_id=payment.id,
+            checkout_url=checkout_url,
+            tap_charge_id=charge_id,
+            status=payment.status,
+        )
+
+    except HTTPException:
+        payment.status = PaymentRecordStatus.FAILED.value
+        db.commit()
+        raise
+
+    except Exception as exc:
+        payment.status = PaymentRecordStatus.FAILED.value
+        payment.tap_response_message = str(exc)
+
+        db.commit()
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not create plan upgrade checkout",
+        )

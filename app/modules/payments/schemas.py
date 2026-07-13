@@ -23,6 +23,7 @@ class PaymentResponse(BaseModel):
     id: int
     user_id: int
     subscription_id: int
+    plan_change_id: int | None = None
 
     provider: PaymentProvider
     status: PaymentRecordStatus
@@ -41,5 +42,10 @@ class PaymentResponse(BaseModel):
     paid_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    
+    
+    
+class CreatePlanChangeCheckoutRequest(BaseModel):
+    plan_change_id: int    
 
     model_config = ConfigDict(from_attributes=True)

@@ -41,6 +41,12 @@ class Payment(Base):
         nullable=False,
         index=True,
     )
+    
+    plan_change_id: Mapped[int | None] = mapped_column(
+    Integer,
+    nullable=True,
+    index=True,
+    )
 
     provider: Mapped[str] = mapped_column(
         String(50),
