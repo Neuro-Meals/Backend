@@ -25,6 +25,7 @@ from app.modules.nutrition.router import router as nutrition_router
 from app.modules.coupons.router import router as coupons_router
 from app.modules.reviews.router import router as reviews_router
 from app.modules.dashboard.router import router as dashboard_router
+from app.modules.locations.router import router as locations_router
 
 
 # Create database tables
@@ -68,6 +69,7 @@ app.include_router(nutrition_router)
 app.include_router(coupons_router)
 app.include_router(reviews_router)
 app.include_router(dashboard_router)
+app.include_router(locations_router)
 
 @app.get("/")
 def root():
