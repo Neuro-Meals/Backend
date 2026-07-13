@@ -1,7 +1,11 @@
 from datetime import datetime
-from pydantic import BaseModel
 
-from app.modules.payments.models import PaymentProvider, PaymentRecordStatus
+from pydantic import BaseModel, ConfigDict
+
+from app.modules.payments.models import (
+    PaymentProvider,
+    PaymentRecordStatus,
+)
 
 
 class CreateCheckoutRequest(BaseModel):
@@ -11,22 +15,31 @@ class CreateCheckoutRequest(BaseModel):
 class CheckoutResponse(BaseModel):
     payment_id: int
     checkout_url: str
-    stripe_checkout_session_id: str
+    tap_charge_id: str
+    status: str
 
 
 class PaymentResponse(BaseModel):
     id: int
     user_id: int
     subscription_id: int
+
     provider: PaymentProvider
     status: PaymentRecordStatus
+
     amount: float
     currency: str
-    checkout_url: str | None
-    stripe_checkout_session_id: str | None
-    stripe_payment_intent_id: str | None
-    paid_at: datetime | None
-    created_at: datetime
 
-    class Config:
-        from_attributes = True
+    checkout_url: str | None = None
+
+    tap_charge_id: str | None = None
+    tap_payment_reference: str | None = None
+    tap_gateway_reference: str | None = None
+    tap_response_code: str | None = None
+    tap_response_message: str | None = None
+
+    paid_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
