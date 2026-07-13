@@ -11,6 +11,7 @@ from app.modules.deliveries.schemas import (
     AssignDriverRequest,
     DeliveryCreate,
     DeliveryResponse,
+    DriverDeliveryResponse,
     UpdateDeliveryStatus,
     UpdateDriverLocation,
 )
@@ -20,6 +21,91 @@ from app.modules.users.models import User, UserRole
 
 router = APIRouter(prefix="/deliveries", tags=["Deliveries"])
 
+def enum_value(value):
+    if value is None:
+        return None
+
+    return value.value if hasattr(value, "value") else value
+
+
+def build_driver_delivery_response(
+    db: Session,
+    delivery: Delivery,
+) -> dict:
+    customer = (
+        db.query(User)
+        .filter(User.id == delivery.user_id)
+        .first()
+    )
+
+    driver = None
+
+    if delivery.driver_id:
+        driver = (
+            db.query(User)
+            .filter(User.id == delivery.driver_id)
+            .first()
+        )
+
+    order = (
+        db.query(Order)
+        .filter(Order.id == delivery.order_id)
+        .first()
+    )
+
+    return {
+        "id": delivery.id,
+        "status": enum_value(delivery.status),
+        "delivery_address": delivery.delivery_address,
+        "delivery_notes": delivery.delivery_notes,
+        "scheduled_at": delivery.scheduled_at,
+        "picked_up_at": delivery.picked_up_at,
+        "delivered_at": delivery.delivered_at,
+        "current_latitude": delivery.current_latitude,
+        "current_longitude": delivery.current_longitude,
+        "failure_reason": delivery.failure_reason,
+        "created_at": delivery.created_at,
+        "updated_at": delivery.updated_at,
+
+        "customer": {
+            "id": customer.id,
+            "first_name": customer.first_name,
+            "last_name": customer.last_name,
+            "full_name": (
+                f"{customer.first_name} {customer.last_name}"
+            ),
+            "email": customer.email,
+            "phone": customer.phone,
+            "location": customer.location,
+            "address": customer.address,
+        }
+        if customer
+        else None,
+
+        "driver": {
+            "id": driver.id,
+            "first_name": driver.first_name,
+            "last_name": driver.last_name,
+            "full_name": (
+                f"{driver.first_name} {driver.last_name}"
+            ),
+            "email": driver.email,
+            "phone": driver.phone,
+        }
+        if driver
+        else None,
+
+        "order": {
+            "id": order.id,
+            "order_number": order.order_number,
+            "status": enum_value(order.status),
+            "total_amount": order.total_amount,
+            "delivery_date": order.delivery_date,
+            "items": order.items,
+        }
+        if order
+        else None,
+    }
 
 @router.post("/", response_model=DeliveryResponse)
 def create_delivery(
@@ -137,17 +223,27 @@ def my_deliveries(
     )
 
 
-@router.get("/driver/my", response_model=list[DeliveryResponse])
+@router.get(
+    "/driver/my",
+    response_model=list[DriverDeliveryResponse],
+)
 def driver_my_deliveries(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.DRIVER)),
+    current_user: User = Depends(
+        require_roles(UserRole.DRIVER)
+    ),
 ):
-    return (
+    deliveries = (
         db.query(Delivery)
         .filter(Delivery.driver_id == current_user.id)
         .order_by(Delivery.id.desc())
         .all()
     )
+
+    return [
+        build_driver_delivery_response(db, delivery)
+        for delivery in deliveries
+    ]
 
 
 @router.get("/{delivery_id}", response_model=DeliveryResponse)

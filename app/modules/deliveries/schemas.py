@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.modules.deliveries.models import DeliveryStatus
 
@@ -41,6 +41,60 @@ class DeliveryResponse(BaseModel):
     current_longitude: float | None
     failure_reason: str | None
     created_at: datetime
+    
+class DeliveryCustomerResponse(BaseModel):
+    id: int
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    location: str | None = None
+    address: str | None = None
+
+
+class DeliveryDriverResponse(BaseModel):
+    id: int
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+
+
+class DeliveryOrderResponse(BaseModel):
+    id: int
+    order_number: str | None = None
+    status: str | None = None
+    total_amount: float | None = None
+    delivery_date: datetime | None = None
+    items: list[dict] | None = None
+
+
+class DriverDeliveryResponse(BaseModel):
+    id: int
+    status: DeliveryStatus
+
+    delivery_address: str
+    delivery_notes: str | None = None
+
+    scheduled_at: datetime | None = None
+    picked_up_at: datetime | None = None
+    delivered_at: datetime | None = None
+
+    current_latitude: float | None = None
+    current_longitude: float | None = None
+
+    failure_reason: str | None = None
+
+    created_at: datetime
+    updated_at: datetime
+
+    customer: DeliveryCustomerResponse | None = None
+    driver: DeliveryDriverResponse | None = None
+    order: DeliveryOrderResponse | None = None
+    
+    model_config = ConfigDict(from_attributes=True)
 
     class Config:
         from_attributes = True
