@@ -41,5 +41,11 @@ class Settings(BaseSettings):
     TAP_WEBHOOK_URL: str = ""
     
     REDIS_URL: str = "redis://localhost:6379/0"
+    
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-5.6"
+
+    CHATBOT_MAX_OUTPUT_TOKENS: int = 500
+    CHATBOT_MAX_HISTORY_MESSAGES: int = 10
 
 settings = Settings()
