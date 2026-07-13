@@ -1,6 +1,5 @@
 import requests
 import streamlit as st
-import os
 
 API_BASE = "https://app.nutriomeals.com"
 
@@ -13,6 +12,18 @@ if "token" not in st.session_state:
 
 if "user" not in st.session_state:
     st.session_state.user = None
+
+if "tap_subscription_id" not in st.session_state:
+    st.session_state.tap_subscription_id = 1
+
+if "tap_payment_id" not in st.session_state:
+    st.session_state.tap_payment_id = None
+
+if "tap_charge_id" not in st.session_state:
+    st.session_state.tap_charge_id = ""
+
+if "tap_checkout_url" not in st.session_state:
+    st.session_state.tap_checkout_url = ""
 
 
 def headers():
@@ -159,38 +170,47 @@ if menu == "Auth":
     with tab5:
         st.subheader("Auth Me")
 
-    if st.button("Get /auth/me"):
-        res = requests.get(f"{API_BASE}/auth/me", headers=headers())
-
-    if res.status_code == 200:
-        data = res.json()
-
-        st.success("Authenticated")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.write("### User")
-            st.write(f"**Name:** {data.get('first_name')} {data.get('last_name')}")
-            st.write(f"**Email:** {data.get('email')}")
-            st.write(f"**Role:** {data.get('role')}")
-
-        with col2:
-            st.write("### Permissions")
-
-            permissions = data.get("permissions", [])
-
-            if permissions:
-                for permission in permissions:
-                    st.success(permission)
+        if st.button("Get /auth/me"):
+            try:
+                res = requests.get(
+                    f"{API_BASE}/auth/me",
+                    headers=headers(),
+                    timeout=30,
+                )
+            except requests.RequestException as exc:
+                st.error(f"Request failed: {exc}")
             else:
-                st.warning("No permissions assigned")
+                if res.status_code == 200:
+                    data = res.json()
+                    st.session_state.user = data
 
-        st.divider()
-        st.json(data)
+                    st.success("Authenticated")
 
-    else:
-        show_response(res)
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.write("### User")
+                        st.write(
+                            f"**Name:** {data.get('first_name', '')} "
+                            f"{data.get('last_name', '')}"
+                        )
+                        st.write(f"**Email:** {data.get('email')}")
+                        st.write(f"**Role:** {data.get('role')}")
+
+                    with col2:
+                        st.write("### Permissions")
+                        permissions = data.get("permissions", [])
+
+                        if permissions:
+                            for permission in permissions:
+                                st.success(permission)
+                        else:
+                            st.warning("No permissions assigned")
+
+                    st.divider()
+                    st.json(data)
+                else:
+                    show_response(res)
 
     with tab6:
         st.subheader("Forgot Password")
@@ -743,50 +763,373 @@ elif menu == "Subscriptions":
             # ================= PAYMENTS =================
 
 elif menu == "Payments":
-    tab1, tab2, tab3 = st.tabs(
-        ["Create Checkout", "Verify Session", "My Payments"]
+    st.header("Tap Sandbox Payment Tester")
+
+    if not st.session_state.token:
+        st.warning("Login as a customer before testing subscriptions and payments.")
+
+    flow_tab, checkout_tab, verify_tab, payments_tab, admin_tab = st.tabs(
+        [
+            "Complete Flow",
+            "Create Tap Checkout",
+            "Verify Tap Charge",
+            "My Payments",
+            "Admin Payments",
+        ]
     )
 
-    with tab1:
-        st.subheader("Create Stripe Checkout")
+    # ------------------------------------------------------------
+    # COMPLETE SUBSCRIPTION -> TAP PAYMENT FLOW
+    # ------------------------------------------------------------
+    with flow_tab:
+        st.subheader("Complete Subscription and Tap Payment Flow")
+        st.caption(
+            "Use this tab to create a subscription, create a Tap sandbox charge, "
+            "open Tap Checkout, verify the returned tap_id, and confirm that the "
+            "subscription becomes active and paid."
+        )
 
-        subscription_id = st.number_input("Subscription ID", min_value=1)
+        col1, col2 = st.columns(2)
 
-        if st.button("Create Checkout"):
-            res = requests.post(
-                f"{API_BASE}/payments/create-checkout",
-                json={"subscription_id": subscription_id},
-                headers=headers(),
+        with col1:
+            plan_id = st.number_input(
+                "Plan ID",
+                min_value=1,
+                value=1,
+                key="tap_flow_plan_id",
+            )
+            notes = st.text_area(
+                "Subscription Notes",
+                value="Tap sandbox payment test",
+                key="tap_flow_notes",
             )
 
-            show_response(res)
+            if st.button(
+                "1. Create Subscription",
+                key="tap_create_subscription",
+                use_container_width=True,
+            ):
+                try:
+                    res = requests.post(
+                        f"{API_BASE}/subscriptions/",
+                        json={"plan_id": int(plan_id), "notes": notes},
+                        headers=headers(),
+                        timeout=30,
+                    )
+                except requests.RequestException as exc:
+                    st.error(f"Request failed: {exc}")
+                else:
+                    show_response(res)
 
-            if res.status_code == 200:
-                data = res.json()
-                checkout_url = data.get("checkout_url")
+                    if res.status_code in (200, 201):
+                        subscription = res.json()
+                        st.session_state.tap_subscription_id = subscription.get("id")
+                        st.success(
+                            f"Subscription #{st.session_state.tap_subscription_id} created."
+                        )
 
-                if checkout_url:
-                    st.success("Checkout created successfully")
-                    st.link_button("Open Stripe Checkout", checkout_url)
-
-    with tab2:
-        st.subheader("Verify Stripe Session")
-
-        session_id = st.text_input("Stripe Session ID", placeholder="cs_test_xxx")
-
-        if st.button("Verify Payment"):
-            res = requests.get(
-                f"{API_BASE}/payments/verify-session/{session_id}",
-                headers=headers(),
+            subscription_id = st.number_input(
+                "Subscription ID",
+                min_value=1,
+                value=int(st.session_state.get("tap_subscription_id", 1)),
+                key="tap_flow_subscription_id",
             )
-            show_response(res)
 
-    with tab3:
+            if st.button(
+                "2. Create Tap Checkout",
+                key="tap_flow_create_checkout",
+                use_container_width=True,
+            ):
+                try:
+                    res = requests.post(
+                        f"{API_BASE}/payments/create-checkout",
+                        json={"subscription_id": int(subscription_id)},
+                        headers=headers(),
+                        timeout=45,
+                    )
+                except requests.RequestException as exc:
+                    st.error(f"Request failed: {exc}")
+                else:
+                    show_response(res)
+
+                    if res.status_code == 200:
+                        data = res.json()
+                        st.session_state.tap_charge_id = data.get("tap_charge_id")
+                        st.session_state.tap_checkout_url = data.get("checkout_url")
+                        st.session_state.tap_payment_id = data.get("payment_id")
+
+                        st.success("Tap sandbox checkout created successfully.")
+
+        with col2:
+            checkout_url = st.session_state.get("tap_checkout_url")
+            charge_id = st.session_state.get("tap_charge_id")
+
+            st.write("### Current Tap Checkout")
+            st.write(
+                f"**Payment ID:** {st.session_state.get('tap_payment_id', 'Not created')}"
+            )
+            st.write(
+                f"**Subscription ID:** "
+                f"{st.session_state.get('tap_subscription_id', subscription_id)}"
+            )
+            st.write(f"**Tap Charge ID:** {charge_id or 'Not created'}")
+
+            if checkout_url:
+                st.link_button(
+                    "3. Open Tap Sandbox Checkout",
+                    checkout_url,
+                    use_container_width=True,
+                )
+                st.info(
+                    "Complete the sandbox payment. Tap will redirect to your "
+                    "success page with a query parameter such as ?tap_id=chg_..."
+                )
+            else:
+                st.warning("Create a checkout first.")
+
+            returned_tap_id = st.text_input(
+                "Tap ID returned after payment",
+                value=charge_id or "",
+                placeholder="chg_TS...",
+                key="tap_flow_verify_id",
+            )
+
+            if st.button(
+                "4. Verify Tap Payment",
+                key="tap_flow_verify",
+                use_container_width=True,
+            ):
+                if not returned_tap_id.strip():
+                    st.error("Enter the Tap charge ID (tap_id).")
+                else:
+                    try:
+                        res = requests.get(
+                            f"{API_BASE}/payments/verify-charge/"
+                            f"{returned_tap_id.strip()}",
+                            headers=headers(),
+                            timeout=45,
+                        )
+                    except requests.RequestException as exc:
+                        st.error(f"Request failed: {exc}")
+                    else:
+                        show_response(res)
+
+                        if res.status_code == 200:
+                            st.success(
+                                "Payment verified. The payment should now be paid "
+                                "and the subscription should be active."
+                            )
+
+            if st.button(
+                "5. Refresh My Subscriptions",
+                key="tap_flow_refresh_subscriptions",
+                use_container_width=True,
+            ):
+                try:
+                    res = requests.get(
+                        f"{API_BASE}/subscriptions/my",
+                        headers=headers(),
+                        timeout=30,
+                    )
+                except requests.RequestException as exc:
+                    st.error(f"Request failed: {exc}")
+                else:
+                    show_response(res)
+
+    # ------------------------------------------------------------
+    # CREATE TAP CHECKOUT
+    # ------------------------------------------------------------
+    with checkout_tab:
+        st.subheader("Create Tap Sandbox Checkout")
+
+        subscription_id = st.number_input(
+            "Subscription ID",
+            min_value=1,
+            value=int(st.session_state.get("tap_subscription_id", 1)),
+            key="tap_checkout_subscription_id",
+        )
+
+        if st.button(
+            "Create Tap Checkout",
+            key="tap_create_checkout",
+            use_container_width=True,
+        ):
+            try:
+                res = requests.post(
+                    f"{API_BASE}/payments/create-checkout",
+                    json={"subscription_id": int(subscription_id)},
+                    headers=headers(),
+                    timeout=45,
+                )
+            except requests.RequestException as exc:
+                st.error(f"Request failed: {exc}")
+            else:
+                show_response(res)
+
+                if res.status_code == 200:
+                    data = res.json()
+                    checkout_url = data.get("checkout_url")
+                    tap_charge_id = data.get("tap_charge_id")
+
+                    st.session_state.tap_subscription_id = int(subscription_id)
+                    st.session_state.tap_checkout_url = checkout_url
+                    st.session_state.tap_charge_id = tap_charge_id
+                    st.session_state.tap_payment_id = data.get("payment_id")
+
+                    st.success("Tap checkout created successfully.")
+
+                    if checkout_url:
+                        st.link_button(
+                            "Open Tap Sandbox Checkout",
+                            checkout_url,
+                            use_container_width=True,
+                        )
+
+                    if tap_charge_id:
+                        st.code(tap_charge_id, language=None)
+
+    # ------------------------------------------------------------
+    # VERIFY TAP CHARGE
+    # ------------------------------------------------------------
+    with verify_tab:
+        st.subheader("Verify Tap Charge")
+
+        st.write(
+            "After Tap redirects the customer, copy the `tap_id` query parameter "
+            "from the success-page URL and paste it below."
+        )
+
+        charge_id = st.text_input(
+            "Tap Charge ID",
+            value=st.session_state.get("tap_charge_id", ""),
+            placeholder="chg_TS...",
+            key="tap_verify_charge_id",
+        )
+
+        if st.button(
+            "Verify Payment",
+            key="tap_verify_payment",
+            use_container_width=True,
+        ):
+            if not charge_id.strip():
+                st.error("Tap Charge ID is required.")
+            else:
+                try:
+                    res = requests.get(
+                        f"{API_BASE}/payments/verify-charge/{charge_id.strip()}",
+                        headers=headers(),
+                        timeout=45,
+                    )
+                except requests.RequestException as exc:
+                    st.error(f"Request failed: {exc}")
+                else:
+                    show_response(res)
+
+                    if res.status_code == 200:
+                        st.success("Tap payment is captured and verified.")
+
+    # ------------------------------------------------------------
+    # CUSTOMER PAYMENT HISTORY
+    # ------------------------------------------------------------
+    with payments_tab:
         st.subheader("My Payments")
 
-        if st.button("Get My Payments"):
-            res = requests.get(
-                f"{API_BASE}/payments/my",
-                headers=headers(),
-            )
-            show_response(res)
+        if st.button(
+            "Get My Payments",
+            key="tap_get_my_payments",
+            use_container_width=True,
+        ):
+            try:
+                res = requests.get(
+                    f"{API_BASE}/payments/my",
+                    headers=headers(),
+                    timeout=30,
+                )
+            except requests.RequestException as exc:
+                st.error(f"Request failed: {exc}")
+            else:
+                show_response(res)
+
+                if res.status_code == 200:
+                    payments = res.json()
+
+                    if isinstance(payments, list) and payments:
+                        rows = [
+                            {
+                                "id": payment.get("id"),
+                                "subscription_id": payment.get("subscription_id"),
+                                "provider": payment.get("provider"),
+                                "status": payment.get("status"),
+                                "amount": payment.get("amount"),
+                                "currency": payment.get("currency"),
+                                "tap_charge_id": payment.get("tap_charge_id"),
+                                "paid_at": payment.get("paid_at"),
+                                "created_at": payment.get("created_at"),
+                            }
+                            for payment in payments
+                        ]
+                        st.dataframe(rows, use_container_width=True)
+                    elif isinstance(payments, list):
+                        st.info("No payments found.")
+
+    # ------------------------------------------------------------
+    # ADMIN / FINANCE PAYMENT LIST
+    # ------------------------------------------------------------
+    with admin_tab:
+        st.subheader("Admin Payment List")
+        st.caption(
+            "Requires admin, super_admin, or finance_manager authentication."
+        )
+
+        status_filter = st.selectbox(
+            "Payment Status",
+            ["", "pending", "paid", "failed", "cancelled"],
+            key="tap_admin_status",
+        )
+        user_id_filter = st.number_input(
+            "User ID (0 means all)",
+            min_value=0,
+            value=0,
+            key="tap_admin_user_id",
+        )
+        page = st.number_input(
+            "Page",
+            min_value=1,
+            value=1,
+            key="tap_admin_page",
+        )
+        limit = st.number_input(
+            "Limit",
+            min_value=1,
+            max_value=100,
+            value=10,
+            key="tap_admin_limit",
+        )
+
+        if st.button(
+            "List Payments",
+            key="tap_admin_list_payments",
+            use_container_width=True,
+        ):
+            params = {
+                "page": int(page),
+                "limit": int(limit),
+            }
+
+            if status_filter:
+                params["status"] = status_filter
+
+            if user_id_filter > 0:
+                params["user_id"] = int(user_id_filter)
+
+            try:
+                res = requests.get(
+                    f"{API_BASE}/payments/",
+                    params=params,
+                    headers=headers(),
+                    timeout=30,
+                )
+            except requests.RequestException as exc:
+                st.error(f"Request failed: {exc}")
+            else:
+                show_response(res)

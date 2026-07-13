@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     TAP_PUBLIC_KEY: str = ""
 
     PAYMENT_CURRENCY: str = "SAR"
+    
+    PAYMENT_PROVIDER: str = "tap"
 
     FRONTEND_SUCCESS_URL: str = "https://nutriomeals.com/payment-success"
     FRONTEND_CANCEL_URL: str = "https://nutriomeals.com/payment-cancel"
