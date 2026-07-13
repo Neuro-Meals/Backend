@@ -33,10 +33,32 @@ def headers():
 
 
 def show_response(res):
+    st.write(f"**HTTP {res.status_code}**")
     try:
         st.json(res.json())
     except Exception:
         st.write(res.text)
+
+
+def api_request(method, path, *, json=None, params=None, timeout=30):
+    """Send an authenticated request to the configured backend."""
+    url = f"{API_BASE}{path}"
+
+    try:
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=headers(),
+            json=json,
+            params=params,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        st.error(f"Request failed: {exc}")
+        return None
+
+    show_response(response)
+    return response
 
 
 menu = st.sidebar.selectbox(
@@ -50,7 +72,13 @@ menu = st.sidebar.selectbox(
         "Meals",
         "Plans",
         "Subscriptions",
+        "Orders",
+        "Deliveries",
+        "Drivers",
+        "Locations",
         "Payments",
+        "Reports",
+        "Custom Endpoint",
     ],
 )
 
@@ -760,10 +788,767 @@ elif menu == "Subscriptions":
             show_response(res)
             
             
-            # ================= PAYMENTS =================
+            
+# ================= ORDERS =================
+
+elif menu == "Orders":
+    st.header("Orders API Tester")
+
+    create_tab, my_tab, admin_tab, one_tab, status_tab, cancel_tab = st.tabs(
+        [
+            "Create from Subscription",
+            "My Orders",
+            "Admin Orders",
+            "Get One",
+            "Update Status",
+            "Cancel",
+        ]
+    )
+
+    with create_tab:
+        subscription_id = st.number_input(
+            "Subscription ID",
+            min_value=1,
+            value=1,
+            key="order_create_subscription_id",
+        )
+        delivery_address = st.text_input(
+            "Delivery Address",
+            key="order_create_address",
+        )
+        delivery_notes = st.text_area(
+            "Delivery Notes",
+            key="order_create_notes",
+        )
+
+        if st.button("Create Order", key="order_create_btn"):
+            payload = {
+                "subscription_id": int(subscription_id),
+                "delivery_address": delivery_address or None,
+                "delivery_notes": delivery_notes or None,
+            }
+            api_request(
+                "POST",
+                "/orders/from-subscription",
+                json=payload,
+            )
+
+    with my_tab:
+        if st.button("Get My Orders", key="orders_my_btn"):
+            response = api_request("GET", "/orders/my")
+
+            if response is not None and response.status_code == 200:
+                orders = response.json()
+                if isinstance(orders, list) and orders:
+                    st.dataframe(
+                        [
+                            {
+                                "id": item.get("id"),
+                                "order_number": item.get("order_number"),
+                                "status": item.get("status"),
+                                "amount": item.get("total_amount"),
+                                "delivery_date": item.get("delivery_date"),
+                                "address": item.get("delivery_address"),
+                            }
+                            for item in orders
+                        ],
+                        use_container_width=True,
+                    )
+
+    with admin_tab:
+        search = st.text_input("Search", key="orders_admin_search")
+        status_filter = st.selectbox(
+            "Status",
+            [
+                "",
+                "pending",
+                "confirmed",
+                "preparing",
+                "ready_for_delivery",
+                "out_for_delivery",
+                "delivered",
+                "cancelled",
+            ],
+            key="orders_admin_status",
+        )
+        user_id = st.number_input(
+            "User ID (0 = all)",
+            min_value=0,
+            value=0,
+            key="orders_admin_user",
+        )
+        subscription_filter = st.number_input(
+            "Subscription ID (0 = all)",
+            min_value=0,
+            value=0,
+            key="orders_admin_subscription",
+        )
+        page = st.number_input(
+            "Page",
+            min_value=1,
+            value=1,
+            key="orders_admin_page",
+        )
+        limit = st.number_input(
+            "Limit",
+            min_value=1,
+            max_value=100,
+            value=10,
+            key="orders_admin_limit",
+        )
+
+        if st.button("List All Orders", key="orders_admin_btn"):
+            params = {"page": int(page), "limit": int(limit)}
+            if search:
+                params["search"] = search
+            if status_filter:
+                params["status"] = status_filter
+            if user_id:
+                params["user_id"] = int(user_id)
+            if subscription_filter:
+                params["subscription_id"] = int(subscription_filter)
+
+            api_request("GET", "/orders/", params=params)
+
+    with one_tab:
+        order_id = st.number_input(
+            "Order ID",
+            min_value=1,
+            value=1,
+            key="orders_get_id",
+        )
+        if st.button("Get Order", key="orders_get_btn"):
+            api_request("GET", f"/orders/{int(order_id)}")
+
+    with status_tab:
+        order_id = st.number_input(
+            "Order ID",
+            min_value=1,
+            value=1,
+            key="orders_status_id",
+        )
+        new_status = st.selectbox(
+            "New Status",
+            [
+                "pending",
+                "confirmed",
+                "preparing",
+                "ready_for_delivery",
+                "out_for_delivery",
+                "delivered",
+                "cancelled",
+            ],
+            key="orders_status_value",
+        )
+
+        if st.button("Update Order Status", key="orders_status_btn"):
+            api_request(
+                "PATCH",
+                f"/orders/{int(order_id)}/status",
+                json={"status": new_status},
+            )
+
+    with cancel_tab:
+        order_id = st.number_input(
+            "Order ID",
+            min_value=1,
+            value=1,
+            key="orders_cancel_id",
+        )
+        if st.button("Cancel Order", key="orders_cancel_btn"):
+            api_request("POST", f"/orders/{int(order_id)}/cancel")
+
+
+# ================= DELIVERIES =================
+
+elif menu == "Deliveries":
+    st.header("Deliveries API Tester")
+
+    (
+        driver_tab,
+        customer_tab,
+        admin_tab,
+        create_tab,
+        one_tab,
+        assign_tab,
+        status_tab,
+        location_tab,
+    ) = st.tabs(
+        [
+            "Driver: My Deliveries",
+            "Customer: My Deliveries",
+            "Admin: All Deliveries",
+            "Create",
+            "Get One",
+            "Assign Driver",
+            "Update Status",
+            "Update Location",
+        ]
+    )
+
+    with driver_tab:
+        st.caption(
+            "Login as a driver. This endpoint returns only deliveries assigned "
+            "to the logged-in driver."
+        )
+
+        if st.button(
+            "Get My Assigned Deliveries",
+            key="driver_my_deliveries_btn",
+            use_container_width=True,
+        ):
+            response = api_request(
+                "GET",
+                "/deliveries/driver/my",
+            )
+
+            if response is not None and response.status_code == 200:
+                deliveries = response.json()
+
+                if not deliveries:
+                    st.info("No delivery is currently assigned to this driver.")
+
+                if isinstance(deliveries, list):
+                    for delivery in deliveries:
+                        with st.expander(
+                            f"Delivery #{delivery.get('id')} — "
+                            f"{delivery.get('status', 'unknown')}",
+                            expanded=True,
+                        ):
+                            col1, col2 = st.columns(2)
+
+                            with col1:
+                                st.write("### Recipient / Destination")
+                                st.write(
+                                    f"**Customer User ID:** "
+                                    f"{delivery.get('user_id', 'N/A')}"
+                                )
+                                st.write(
+                                    f"**Order ID:** "
+                                    f"{delivery.get('order_id', 'N/A')}"
+                                )
+                                st.write(
+                                    f"**Address:** "
+                                    f"{delivery.get('delivery_address', 'N/A')}"
+                                )
+                                st.write(
+                                    f"**Notes:** "
+                                    f"{delivery.get('delivery_notes') or 'None'}"
+                                )
+                                st.write(
+                                    f"**Scheduled:** "
+                                    f"{delivery.get('scheduled_at') or 'Not scheduled'}"
+                                )
+
+                            with col2:
+                                st.write("### Delivery Progress")
+                                st.write(
+                                    f"**Driver ID:** "
+                                    f"{delivery.get('driver_id', 'N/A')}"
+                                )
+                                st.write(
+                                    f"**Status:** "
+                                    f"{delivery.get('status', 'N/A')}"
+                                )
+                                st.write(
+                                    f"**Picked up:** "
+                                    f"{delivery.get('picked_up_at') or 'No'}"
+                                )
+                                st.write(
+                                    f"**Delivered:** "
+                                    f"{delivery.get('delivered_at') or 'No'}"
+                                )
+                                st.write(
+                                    f"**Failure reason:** "
+                                    f"{delivery.get('failure_reason') or 'None'}"
+                                )
+
+                            st.json(delivery)
+
+    with customer_tab:
+        if st.button(
+            "Get My Customer Deliveries",
+            key="customer_my_deliveries_btn",
+        ):
+            api_request("GET", "/deliveries/my")
+
+    with admin_tab:
+        search = st.text_input(
+            "Search address, notes, or failure reason",
+            key="deliveries_admin_search",
+        )
+        status_filter = st.selectbox(
+            "Delivery Status",
+            [
+                "",
+                "pending",
+                "assigned",
+                "picked_up",
+                "out_for_delivery",
+                "delivered",
+                "failed",
+                "cancelled",
+            ],
+            key="deliveries_admin_status",
+        )
+        driver_id = st.number_input(
+            "Driver ID (0 = all)",
+            min_value=0,
+            value=0,
+            key="deliveries_admin_driver",
+        )
+        user_id = st.number_input(
+            "Customer User ID (0 = all)",
+            min_value=0,
+            value=0,
+            key="deliveries_admin_user",
+        )
+        order_id = st.number_input(
+            "Order ID (0 = all)",
+            min_value=0,
+            value=0,
+            key="deliveries_admin_order",
+        )
+        page = st.number_input(
+            "Page",
+            min_value=1,
+            value=1,
+            key="deliveries_admin_page",
+        )
+        limit = st.number_input(
+            "Limit",
+            min_value=1,
+            max_value=100,
+            value=10,
+            key="deliveries_admin_limit",
+        )
+
+        if st.button("List Deliveries", key="deliveries_admin_btn"):
+            params = {"page": int(page), "limit": int(limit)}
+            if search:
+                params["search"] = search
+            if status_filter:
+                params["status"] = status_filter
+            if driver_id:
+                params["driver_id"] = int(driver_id)
+            if user_id:
+                params["user_id"] = int(user_id)
+            if order_id:
+                params["order_id"] = int(order_id)
+
+            api_request("GET", "/deliveries/", params=params)
+
+    with create_tab:
+        order_id = st.number_input(
+            "Order ID",
+            min_value=1,
+            value=1,
+            key="delivery_create_order",
+        )
+        driver_id = st.number_input(
+            "Driver ID (0 = unassigned)",
+            min_value=0,
+            value=0,
+            key="delivery_create_driver",
+        )
+        delivery_address = st.text_input(
+            "Delivery Address (optional)",
+            key="delivery_create_address",
+        )
+        delivery_notes = st.text_area(
+            "Delivery Notes (optional)",
+            key="delivery_create_notes",
+        )
+        scheduled_at = st.text_input(
+            "Scheduled At (ISO datetime, optional)",
+            placeholder="2026-07-15T12:00:00",
+            key="delivery_create_scheduled",
+        )
+
+        if st.button("Create Delivery", key="delivery_create_btn"):
+            payload = {
+                "order_id": int(order_id),
+                "driver_id": int(driver_id) if driver_id else None,
+                "delivery_address": delivery_address or None,
+                "delivery_notes": delivery_notes or None,
+                "scheduled_at": scheduled_at or None,
+            }
+            api_request("POST", "/deliveries/", json=payload)
+
+    with one_tab:
+        delivery_id = st.number_input(
+            "Delivery ID",
+            min_value=1,
+            value=1,
+            key="delivery_get_id",
+        )
+        if st.button("Get Delivery", key="delivery_get_btn"):
+            api_request("GET", f"/deliveries/{int(delivery_id)}")
+
+    with assign_tab:
+        delivery_id = st.number_input(
+            "Delivery ID",
+            min_value=1,
+            value=1,
+            key="delivery_assign_id",
+        )
+        driver_id = st.number_input(
+            "Driver ID",
+            min_value=1,
+            value=1,
+            key="delivery_assign_driver",
+        )
+
+        if st.button("Assign Driver", key="delivery_assign_btn"):
+            api_request(
+                "PATCH",
+                f"/deliveries/{int(delivery_id)}/assign-driver",
+                json={"driver_id": int(driver_id)},
+            )
+
+    with status_tab:
+        delivery_id = st.number_input(
+            "Delivery ID",
+            min_value=1,
+            value=1,
+            key="delivery_status_id",
+        )
+        delivery_status = st.selectbox(
+            "New Status",
+            [
+                "pending",
+                "assigned",
+                "picked_up",
+                "out_for_delivery",
+                "delivered",
+                "failed",
+                "cancelled",
+            ],
+            key="delivery_status_value",
+        )
+        failure_reason = st.text_area(
+            "Failure Reason (required for failed status)",
+            key="delivery_failure_reason",
+        )
+
+        if st.button("Update Delivery Status", key="delivery_status_btn"):
+            payload = {
+                "status": delivery_status,
+                "failure_reason": failure_reason or None,
+            }
+            api_request(
+                "PATCH",
+                f"/deliveries/{int(delivery_id)}/status",
+                json=payload,
+            )
+
+    with location_tab:
+        delivery_id = st.number_input(
+            "Delivery ID",
+            min_value=1,
+            value=1,
+            key="delivery_location_id",
+        )
+        latitude = st.number_input(
+            "Latitude",
+            value=24.7136,
+            format="%.6f",
+            key="delivery_latitude",
+        )
+        longitude = st.number_input(
+            "Longitude",
+            value=46.6753,
+            format="%.6f",
+            key="delivery_longitude",
+        )
+
+        if st.button("Update Driver Location", key="delivery_location_btn"):
+            api_request(
+                "PATCH",
+                f"/deliveries/{int(delivery_id)}/location",
+                json={
+                    "latitude": float(latitude),
+                    "longitude": float(longitude),
+                },
+            )
+
+
+# ================= DRIVERS =================
+
+elif menu == "Drivers":
+    st.header("Driver Management API Tester")
+
+    create_tab, list_tab, get_tab, update_tab, delete_tab = st.tabs(
+        ["Create", "List", "Get One", "Update", "Deactivate"]
+    )
+
+    with create_tab:
+        first_name = st.text_input(
+            "First Name",
+            key="driver_create_first",
+        )
+        last_name = st.text_input(
+            "Last Name",
+            key="driver_create_last",
+        )
+        email = st.text_input(
+            "Email",
+            key="driver_create_email",
+        )
+        phone = st.text_input(
+            "Phone",
+            key="driver_create_phone",
+        )
+        password = st.text_input(
+            "Password",
+            type="password",
+            key="driver_create_password",
+        )
+        location = st.text_input(
+            "Location",
+            key="driver_create_location",
+        )
+        address = st.text_input(
+            "Address",
+            key="driver_create_address",
+        )
+
+        if st.button("Create Driver", key="driver_create_btn"):
+            api_request(
+                "POST",
+                "/driver/",
+                json={
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "email": email,
+                    "phone": phone,
+                    "password": password,
+                    "location": location or None,
+                    "address": address or None,
+                },
+            )
+
+    with list_tab:
+        if st.button("List Drivers", key="driver_list_btn"):
+            api_request("GET", "/driver/")
+
+    with get_tab:
+        driver_id = st.number_input(
+            "Driver ID",
+            min_value=1,
+            value=1,
+            key="driver_get_id",
+        )
+        if st.button("Get Driver", key="driver_get_btn"):
+            api_request("GET", f"/driver/{int(driver_id)}")
+
+    with update_tab:
+        driver_id = st.number_input(
+            "Driver ID",
+            min_value=1,
+            value=1,
+            key="driver_update_id",
+        )
+        first_name = st.text_input(
+            "First Name",
+            key="driver_update_first",
+        )
+        last_name = st.text_input(
+            "Last Name",
+            key="driver_update_last",
+        )
+        phone = st.text_input(
+            "Phone",
+            key="driver_update_phone",
+        )
+        location = st.text_input(
+            "Location",
+            key="driver_update_location",
+        )
+        address = st.text_input(
+            "Address",
+            key="driver_update_address",
+        )
+        is_active = st.checkbox(
+            "Active",
+            value=True,
+            key="driver_update_active",
+        )
+
+        if st.button("Update Driver", key="driver_update_btn"):
+            payload = {
+                "is_active": is_active,
+            }
+            if first_name:
+                payload["first_name"] = first_name
+            if last_name:
+                payload["last_name"] = last_name
+            if phone:
+                payload["phone"] = phone
+            if location:
+                payload["location"] = location
+            if address:
+                payload["address"] = address
+
+            api_request(
+                "PUT",
+                f"/driver/{int(driver_id)}",
+                json=payload,
+            )
+
+    with delete_tab:
+        driver_id = st.number_input(
+            "Driver ID",
+            min_value=1,
+            value=1,
+            key="driver_delete_id",
+        )
+        if st.button("Deactivate Driver", key="driver_delete_btn"):
+            api_request("DELETE", f"/driver/{int(driver_id)}")
+
+
+# ================= LOCATIONS =================
+
+elif menu == "Locations":
+    st.header("Saudi Locations API Tester")
+
+    all_tab, regions_tab, cities_tab, validate_tab = st.tabs(
+        ["All Locations", "Regions", "Cities by Region", "Validate"]
+    )
+
+    with all_tab:
+        search = st.text_input(
+            "Search (optional)",
+            key="locations_search",
+        )
+        if st.button("Get Locations", key="locations_all_btn"):
+            params = {"search": search} if search else None
+            api_request("GET", "/locations/", params=params)
+
+    with regions_tab:
+        if st.button("Get Regions", key="locations_regions_btn"):
+            api_request("GET", "/locations/regions")
+
+    with cities_tab:
+        region_code = st.text_input(
+            "Region Code",
+            value="riyadh",
+            key="locations_city_region",
+        )
+        if st.button("Get Cities", key="locations_cities_btn"):
+            api_request(
+                "GET",
+                f"/locations/regions/{region_code.strip()}/cities",
+            )
+
+    with validate_tab:
+        region_code = st.text_input(
+            "Region Code",
+            value="riyadh",
+            key="locations_validate_region",
+        )
+        city_code = st.text_input(
+            "City Code",
+            value="riyadh_city",
+            key="locations_validate_city",
+        )
+
+        if st.button("Validate Location", key="locations_validate_btn"):
+            api_request(
+                "GET",
+                "/locations/validate",
+                params={
+                    "region_code": region_code.strip(),
+                    "city_code": city_code.strip(),
+                },
+            )
+
+
+# ================= REPORTS =================
+
+elif menu == "Reports":
+    st.header("Reports API Tester")
+    st.caption("These endpoints generally require an admin/reporting role.")
+
+    endpoints = {
+        "Summary": "/reports/summary",
+        "Orders": "/reports/orders",
+        "Subscriptions": "/reports/subscriptions",
+        "Deliveries": "/reports/deliveries",
+        "Revenue": "/reports/revenue",
+    }
+
+    selected = st.selectbox(
+        "Report",
+        list(endpoints.keys()),
+        key="report_select",
+    )
+
+    if st.button("Fetch Report", key="report_fetch_btn"):
+        api_request("GET", endpoints[selected])
+
+
+# ================= CUSTOM ENDPOINT =================
+
+elif menu == "Custom Endpoint":
+    st.header("Custom Endpoint Tester")
+    st.caption(
+        "Use this for any backend endpoint that is not yet represented by a "
+        "dedicated tab."
+    )
+
+    method = st.selectbox(
+        "HTTP Method",
+        ["GET", "POST", "PUT", "PATCH", "DELETE"],
+        key="custom_method",
+    )
+    path = st.text_input(
+        "Endpoint Path",
+        value="/auth/me",
+        help="Example: /notifications/my",
+        key="custom_path",
+    )
+    params_text = st.text_area(
+        "Query Parameters as JSON",
+        value="{}",
+        key="custom_params",
+    )
+    body_text = st.text_area(
+        "JSON Body",
+        value="{}",
+        key="custom_body",
+    )
+
+    if st.button("Send Request", key="custom_send_btn"):
+        import json
+
+        try:
+            params = json.loads(params_text or "{}")
+        except json.JSONDecodeError as exc:
+            st.error(f"Invalid query-parameter JSON: {exc}")
+            params = None
+
+        try:
+            body = json.loads(body_text or "{}")
+        except json.JSONDecodeError as exc:
+            st.error(f"Invalid request-body JSON: {exc}")
+            body = None
+
+        if params is not None and body is not None:
+            api_request(
+                method,
+                path if path.startswith("/") else f"/{path}",
+                params=params or None,
+                json=body or None,
+                timeout=60,
+            )
+
+
+
+# ================= PAYMENTS =================
 
 elif menu == "Payments":
-    st.header("Tap Sandbox Payment Tester")
+    st.header("Tap Payment Tester")
 
     if not st.session_state.token:
         st.warning("Login as a customer before testing subscriptions and payments.")
@@ -800,7 +1585,7 @@ elif menu == "Payments":
             )
             notes = st.text_area(
                 "Subscription Notes",
-                value="Tap sandbox payment test",
+                value="Tap payment test",
                 key="tap_flow_notes",
             )
 
@@ -858,7 +1643,7 @@ elif menu == "Payments":
                         st.session_state.tap_checkout_url = data.get("checkout_url")
                         st.session_state.tap_payment_id = data.get("payment_id")
 
-                        st.success("Tap sandbox checkout created successfully.")
+                        st.success("Tap checkout created successfully.")
 
         with col2:
             checkout_url = st.session_state.get("tap_checkout_url")
@@ -876,7 +1661,7 @@ elif menu == "Payments":
 
             if checkout_url:
                 st.link_button(
-                    "3. Open Tap Sandbox Checkout",
+                    "3. Open Tap Secure Checkout",
                     checkout_url,
                     use_container_width=True,
                 )
@@ -940,7 +1725,7 @@ elif menu == "Payments":
     # CREATE TAP CHECKOUT
     # ------------------------------------------------------------
     with checkout_tab:
-        st.subheader("Create Tap Sandbox Checkout")
+        st.subheader("Create Tap Checkout")
 
         subscription_id = st.number_input(
             "Subscription ID",
@@ -980,7 +1765,7 @@ elif menu == "Payments":
 
                     if checkout_url:
                         st.link_button(
-                            "Open Tap Sandbox Checkout",
+                            "Open Tap Secure Checkout",
                             checkout_url,
                             use_container_width=True,
                         )
