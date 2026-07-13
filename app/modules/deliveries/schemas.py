@@ -1,5 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict
+
+from pydantic import BaseModel, ConfigDict
 
 from app.modules.deliveries.models import DeliveryStatus
 
@@ -7,9 +8,9 @@ from app.modules.deliveries.models import DeliveryStatus
 class DeliveryCreate(BaseModel):
     order_id: int
     driver_id: int | None = None
-    scheduled_at: datetime | None = None
     delivery_address: str | None = None
     delivery_notes: str | None = None
+    scheduled_at: datetime | None = None
 
 
 class AssignDriverRequest(BaseModel):
@@ -22,26 +23,36 @@ class UpdateDeliveryStatus(BaseModel):
 
 
 class UpdateDriverLocation(BaseModel):
-    latitude: float = Field(..., ge=-90, le=90)
-    longitude: float = Field(..., ge=-180, le=180)
+    latitude: float
+    longitude: float
 
 
 class DeliveryResponse(BaseModel):
     id: int
     order_id: int
     user_id: int
-    driver_id: int | None
+    driver_id: int | None = None
+
     status: DeliveryStatus
+
     delivery_address: str
-    delivery_notes: str | None
-    scheduled_at: datetime | None
-    picked_up_at: datetime | None
-    delivered_at: datetime | None
-    current_latitude: float | None
-    current_longitude: float | None
-    failure_reason: str | None
+    delivery_notes: str | None = None
+
+    scheduled_at: datetime | None = None
+    picked_up_at: datetime | None = None
+    delivered_at: datetime | None = None
+
+    current_latitude: float | None = None
+    current_longitude: float | None = None
+
+    failure_reason: str | None = None
+
     created_at: datetime
-    
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DeliveryCustomerResponse(BaseModel):
     id: int
     first_name: str | None = None
@@ -93,8 +104,5 @@ class DriverDeliveryResponse(BaseModel):
     customer: DeliveryCustomerResponse | None = None
     driver: DeliveryDriverResponse | None = None
     order: DeliveryOrderResponse | None = None
-    
-    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
