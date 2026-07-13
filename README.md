@@ -237,6 +237,8 @@ SELECT * FROM subscriptions;
 11. Obtain live approval and live keys
 12. Run one small live SAR transaction
 
-``
+```
 
+# AWS
+ssh -i ~/Downloads/adam_katani.pem ubuntu@13.48.55.140
 
