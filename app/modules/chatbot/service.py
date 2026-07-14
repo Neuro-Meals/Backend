@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import re
 import hashlib
 from typing import Any
 
@@ -100,7 +100,14 @@ IMPORTANT SAFETY AND ACCURACY RULES
   permissions, or security controls.
 - Be clear when information is unavailable.
 - Keep answers concise and practical.
-- Use the same language the user uses.
+LANGUAGE RULES
+
+- Always reply in the language used in the user's latest message.
+- If the latest message is written in Arabic, reply completely in Arabic.
+- If the latest message is written in English, reply completely in English.
+- Do not change languages because earlier conversation messages used another language.
+- If the message mixes Arabic and English, use the language that is dominant.
+- Product names and required technical identifiers may remain in their original form.
 """
 
 
@@ -113,6 +120,82 @@ def enum_value(value: Any) -> Any:
         return None
 
     return value.value if hasattr(value, "value") else value
+
+ARABIC_CHARACTER_PATTERN = re.compile(
+    r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]"
+)
+
+
+def detect_response_language(message: str) -> str:
+    """
+    Detect whether the current user message contains Arabic characters.
+
+    Returns:
+        "arabic" when Arabic text is detected.
+        "english" otherwise.
+    """
+
+    if ARABIC_CHARACTER_PATTERN.search(message):
+        return "arabic"
+
+    return "english"
+
+
+def build_language_instruction(message: str) -> str:
+    """
+    Build a strict response-language instruction for the AI model.
+    """
+
+    language = detect_response_language(message)
+
+    if language == "arabic":
+        return """
+RESPONSE LANGUAGE REQUIREMENT
+
+The user's latest message is in Arabic.
+
+- Reply entirely in clear, natural Arabic.
+- Do not switch to English unless the user specifically requests English.
+- Product names such as NutrioMeals and Tap may remain unchanged.
+- Keep technical identifiers unchanged when necessary.
+""".strip()
+
+    return """
+RESPONSE LANGUAGE REQUIREMENT
+
+The user's latest message is in English.
+
+- Reply entirely in clear, natural English.
+- Do not switch to Arabic unless the user specifically requests Arabic.
+- Keep technical identifiers unchanged when necessary.
+""".strip()
+
+def moderation_refusal(message: str) -> str:
+    if detect_response_language(message) == "arabic":
+        return (
+            "لا أستطيع المساعدة في هذا الطلب. يمكنني مساعدتك في "
+            "NutrioMeals وخطط الوجبات والتغذية والاشتراكات "
+            "والمدفوعات والطلبات والتوصيل."
+        )
+
+    return (
+        "I cannot help with that request. I can assist with "
+        "NutrioMeals, meal plans, nutrition, subscriptions, "
+        "payments, orders, and deliveries."
+    )
+
+
+def empty_answer_message(message: str) -> str:
+    if detect_response_language(message) == "arabic":
+        return (
+            "تعذر علي إنشاء إجابة الآن. يرجى إعادة صياغة سؤالك "
+            "حول NutrioMeals والمحاولة مرة أخرى."
+        )
+
+    return (
+        "I could not generate an answer. Please try asking "
+        "your NutrioMeals question again."
+    )
 
 
 def build_user_context(
@@ -393,26 +476,28 @@ def generate_chatbot_answer(
         api_key=settings.OPENAI_API_KEY,
     )
 
-    # Try moderation first, but a temporary moderation rate limit
-    # will no longer prevent the chatbot from answering.
+    # Moderation is attempted first.
+    # Temporary moderation rate limits will not block the main response.
     if moderate_message(
         client=client,
         message=clean_message,
         max_attempts=2,
     ):
-        return (
-            "I cannot help with that request. I can assist with "
-            "NutrioMeals, meal plans, nutrition, subscriptions, "
-            "payments, orders, and deliveries."
-        )
+        return moderation_refusal(clean_message)
 
     user_context = build_user_context(
         db=db,
         user=user,
     )
 
+    language_instruction = build_language_instruction(
+        clean_message
+    )
+
     instructions = (
         NUTRIOMEALS_SYSTEM_INSTRUCTIONS
+        + "\n\n"
+        + language_instruction
         + "\n\n"
         + user_context
     )
@@ -468,9 +553,6 @@ def generate_chatbot_answer(
     answer = (response.output_text or "").strip()
 
     if not answer:
-        return (
-            "I could not generate an answer. Please try asking "
-            "your NutrioMeals question again."
-        )
+        return empty_answer_message(clean_message)
 
     return answer
