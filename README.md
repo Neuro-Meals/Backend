@@ -242,3 +242,9 @@ SELECT * FROM subscriptions;
 # AWS
 ssh -i ~/Downloads/adam_katani.pem ubuntu@13.48.55.140
 
+# CHARGES
+
+```
+https://os.tap.company/acceptance/charges
+```
+

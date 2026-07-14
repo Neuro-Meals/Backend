@@ -1,63 +1,79 @@
 from datetime import datetime, timedelta
-from fastapi import HTTPException
+
 from sqlalchemy.orm import Session
 
-from app.core.security import hash_password, generate_otp
+from app.core.security import generate_otp, hash_password
 from app.modules.users.models import User, UserRole
 from app.modules.users.schemas import UserCreate
 
 
-def get_user_by_email(db: Session, email: str) -> User | None:
-    return db.query(User).filter(User.email == email).first()
+def normalize_phone(phone: str) -> str:
+    return (
+        phone.strip()
+        .replace(" ", "")
+        .replace("-", "")
+        .replace("(", "")
+        .replace(")", "")
+    )
 
 
-def get_user_by_phone(db: Session, phone: str) -> User | None:
-    return db.query(User).filter(User.phone == phone).first()
+def get_user_by_email(
+    db: Session,
+    email: str,
+) -> User | None:
+    return (
+        db.query(User)
+        .filter(User.email == email.strip().lower())
+        .first()
+    )
 
 
-def get_user_by_id(db: Session, user_id: int) -> User | None:
-    return db.query(User).filter(User.id == user_id).first()
+def get_user_by_phone(
+    db: Session,
+    phone: str,
+) -> User | None:
+    normalized_phone = normalize_phone(phone)
+
+    return (
+        db.query(User)
+        .filter(User.phone == normalized_phone)
+        .first()
+    )
 
 
-def create_user(db: Session, payload: UserCreate, role: UserRole = UserRole.CUSTOMER) -> User:
-
-    # Check email
-    existing_email = get_user_by_email(db, payload.email)
-    if existing_email:
-        raise HTTPException(
-            status_code=409,
-            detail="Email address already exists."
-        )
-
-    # Check phone
-    existing_phone = get_user_by_phone(db, payload.phone)
-    if existing_phone:
-        raise HTTPException(
-            status_code=409,
-            detail="Phone number already exists."
-        )
-
+def create_user(
+    db: Session,
+    payload: UserCreate,
+) -> User:
     otp = generate_otp()
 
     user = User(
-        first_name=payload.first_name,
-        last_name=payload.last_name,
-        email=payload.email,
-        phone=payload.phone,
-        location=payload.location,
-        address=payload.address,
-        gender=payload.gender,
-        age=payload.age,
-        height_cm=payload.height_cm,
-        weight_kg=payload.weight_kg,
-        fitness_goal=payload.fitness_goal,
-        dietary_preference=payload.dietary_preference,
-        allergies=payload.allergies,
+        first_name=payload.first_name.strip(),
+        last_name=payload.last_name.strip(),
+        email=payload.email.strip().lower(),
+        phone=normalize_phone(payload.phone),
         hashed_password=hash_password(payload.password),
-        role=role,
-        email_otp=otp,
-        email_otp_expires_at=datetime.utcnow() + timedelta(minutes=10),
+
+        location=payload.location.strip(),
+        address=payload.address.strip(),
+
+        role=UserRole.CUSTOMER,
         is_verified=False,
+        is_active=True,
+
+        email_otp=otp,
+        email_otp_expires_at=(
+            datetime.utcnow() + timedelta(minutes=10)
+        ),
+
+        # Profile information will be completed later.
+        gender=None,
+        age=None,
+        height_cm=None,
+        weight_kg=None,
+        fitness_goal=None,
+        dietary_preference=None,
+        allergies=[],
     )
 
     db.add(user)
