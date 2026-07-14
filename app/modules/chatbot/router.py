@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -25,6 +27,9 @@ from app.modules.chatbot.service import (
 from app.modules.users.models import User
 
 
+logger = logging.getLogger(__name__)
+
+
 router = APIRouter(
     prefix="/chatbot",
     tags=["AI Chatbot"],
@@ -45,7 +50,6 @@ def ask_chatbot(
 ):
     ip_address = get_client_ip(request)
 
-    # General protection applying to every request.
     rate_limit(
         key=f"rate:chatbot:ip:{ip_address}",
         limit=30,
@@ -53,16 +57,12 @@ def ask_chatbot(
     )
 
     if current_user is not None:
-        # Logged-in users:
-        # maximum 20 messages every 10 minutes per account.
         rate_limit(
             key=f"rate:chatbot:user:{current_user.id}",
             limit=20,
             window_seconds=600,
         )
     else:
-        # Anonymous visitors:
-        # maximum 10 messages every 10 minutes per IP.
         rate_limit(
             key=f"rate:chatbot:anonymous:{ip_address}",
             limit=10,
@@ -73,20 +73,31 @@ def ask_chatbot(
         answer = generate_chatbot_answer(
             db=db,
             user=current_user,
-            message=payload.message,
+            message=payload.message.strip(),
             history=payload.history,
-
-            # For a logged-in user, the service uses user.id.
-            # For an anonymous visitor, it hashes this identifier.
             anonymous_identifier=ip_address,
         )
 
     except RuntimeError as exc:
-        # Log the original error internally.
-        # Do not expose API or provider details to the frontend.
+        logger.exception(
+            "Chatbot request failed: %s",
+            exc,
+        )
+
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The AI assistant is temporarily unavailable",
+        ) from exc
+
+    except Exception as exc:
+        logger.exception(
+            "Unexpected chatbot error: %s",
+            exc,
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected chatbot error occurred",
         ) from exc
 
     return ChatResponse(
