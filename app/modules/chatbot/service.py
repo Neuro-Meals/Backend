@@ -72,8 +72,27 @@ IMPORTANT SAFETY AND ACCURACY RULES
 
 def build_user_context(
     db: Session,
-    user: User,
+    user: User | None,
 ) -> str:
+    if user is None:
+        return """
+CURRENT USER CONTEXT
+
+The visitor is not authenticated.
+
+Rules for anonymous visitors:
+
+- You may explain NutrioMeals registration and email verification.
+- You may explain available meals and meal plans.
+- You may explain how subscriptions and Tap payments work.
+- You may explain general order and delivery processes.
+- You may answer general nutrition questions within the allowed scope.
+- Do not claim that the visitor has a subscription.
+- Do not claim that the visitor completed a payment.
+- Do not provide personal order, delivery, payment, or subscription details.
+- For personal account questions, ask the visitor to sign in.
+"""
+
     subscription = (
         db.query(Subscription)
         .filter(
@@ -95,13 +114,27 @@ def build_user_context(
         f"User ID: {user.id}",
         f"Name: {user.first_name} {user.last_name}",
         f"Role: {getattr(user.role, 'value', user.role)}",
-        f"Location: {getattr(user, 'location', None) or 'Not provided'}",
-        f"Fitness goal: "
-        f"{getattr(getattr(user, 'fitness_goal', None), 'value', getattr(user, 'fitness_goal', None)) or 'Not provided'}",
-        f"Dietary preference: "
-        f"{getattr(user, 'dietary_preference', None) or 'Not provided'}",
+        (
+            f"Location: "
+            f"{getattr(user, 'location', None) or 'Not provided'}"
+        ),
+        (
+            f"Dietary preference: "
+            f"{getattr(user, 'dietary_preference', None) or 'Not provided'}"
+        ),
         f"Allergies: {getattr(user, 'allergies', None) or []}",
     ]
+
+    fitness_goal = getattr(user, "fitness_goal", None)
+
+    context_lines.append(
+        "Fitness goal: "
+        + (
+            getattr(fitness_goal, "value", fitness_goal)
+            if fitness_goal
+            else "Not provided"
+        )
+    )
 
     if not subscription:
         context_lines.extend(
@@ -125,21 +158,24 @@ def build_user_context(
     context_lines.extend(
         [
             f"Subscription ID: {subscription.id}",
-            f"Subscription status: "
-            f"{getattr(subscription.status, 'value', subscription.status)}",
-            f"Payment status: "
-            f"{getattr(subscription.payment_status, 'value', subscription.payment_status)}",
+            (
+                "Subscription status: "
+                f"{getattr(subscription.status, 'value', subscription.status)}"
+            ),
+            (
+                "Payment status: "
+                f"{getattr(subscription.payment_status, 'value', subscription.payment_status)}"
+            ),
             f"Plan ID: {subscription.plan_id}",
             f"Plan name: {plan.name_en if plan else 'Unknown'}",
             f"Plan amount: {subscription.amount}",
             f"Start date: {subscription.start_date}",
             f"End date: {subscription.end_date}",
-            f"Paused at: {getattr(subscription, 'paused_at', None)}",
+            f"Paused at: {subscription.paused_at}",
         ]
     )
 
     return "\n".join(context_lines)
-
 
 def build_chat_input(
     history: list[ChatHistoryMessage],
@@ -169,8 +205,17 @@ def build_chat_input(
     return input_messages
 
 
-def build_safety_identifier(user: User) -> str:
-    raw_value = f"nutriomeals-user-{user.id}"
+def build_safety_identifier(
+    user: User | None,
+    anonymous_identifier: str | None = None,
+) -> str:
+    if user:
+        raw_value = f"nutriomeals-user-{user.id}"
+    else:
+        raw_value = (
+            f"nutriomeals-anonymous-"
+            f"{anonymous_identifier or 'visitor'}"
+        )
 
     return hashlib.sha256(
         raw_value.encode("utf-8")
@@ -194,7 +239,7 @@ def moderate_message(
 
 def generate_chatbot_answer(
     db: Session,
-    user: User,
+    user: User | None,
     message: str,
     history: list[ChatHistoryMessage],
 ) -> str:

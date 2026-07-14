@@ -25,6 +25,9 @@ if "tap_charge_id" not in st.session_state:
 if "tap_checkout_url" not in st.session_state:
     st.session_state.tap_checkout_url = ""
 
+if "chatbot_messages" not in st.session_state:
+    st.session_state.chatbot_messages = []
+
 
 def headers():
     if st.session_state.token:
@@ -78,6 +81,7 @@ menu = st.sidebar.selectbox(
         "Locations",
         "Payments",
         "Reports",
+        "Chatbot",
         "Custom Endpoint",
     ],
 )
@@ -1486,6 +1490,200 @@ elif menu == "Reports":
 
     if st.button("Fetch Report", key="report_fetch_btn"):
         api_request("GET", endpoints[selected])
+
+
+
+# ================= CHATBOT =================
+
+elif menu == "Chatbot":
+    st.header("NutrioMeals AI Chatbot Tester")
+
+    st.caption(
+        "This tester sends authenticated requests to POST /chatbot/ask. "
+        "The backend OpenAI API key is never exposed to Streamlit."
+    )
+
+    if not st.session_state.token:
+        st.info(
+            "You are using the chatbot as a guest. Sign in to ask questions "
+            "about your personal subscription, payment, order, or delivery."
+    )
+
+    info_col, action_col = st.columns([3, 1])
+
+    with info_col:
+        current_user = st.session_state.user or {}
+        st.write(
+            f"**Current user:** "
+            f"{current_user.get('first_name', '')} "
+            f"{current_user.get('last_name', '')}"
+        )
+        st.write(f"**Email:** {current_user.get('email', 'Not logged in')}")
+        st.write(f"**Role:** {current_user.get('role', 'Unknown')}")
+
+    with action_col:
+        if st.button(
+            "Clear Conversation",
+            key="chatbot_clear_conversation",
+            use_container_width=True,
+        ):
+            st.session_state.chatbot_messages = []
+            st.rerun()
+
+    st.divider()
+
+    # Display the local conversation history.
+    if not st.session_state.chatbot_messages:
+        st.info(
+            "Try asking: What is my subscription status? "
+            "Can I pause my plan? How does delivery work?"
+        )
+
+    for chat_message in st.session_state.chatbot_messages:
+        role = chat_message.get("role", "assistant")
+        content = chat_message.get("content", "")
+
+        with st.chat_message(role):
+            st.markdown(content)
+
+    user_message = st.chat_input(
+        "Ask a NutrioMeals question",
+    )
+
+    if user_message:
+        clean_message = user_message.strip()
+
+        if not clean_message:
+            st.warning("Enter a question.")
+        else:
+            # The backend expects only previous history here.
+            history = [
+                {
+                    "role": item.get("role"),
+                    "content": item.get("content"),
+                }
+                for item in st.session_state.chatbot_messages[-10:]
+                if item.get("role") in {"user", "assistant"}
+                and item.get("content")
+            ]
+
+            st.session_state.chatbot_messages.append(
+                {
+                    "role": "user",
+                    "content": clean_message,
+                }
+            )
+
+            with st.chat_message("user"):
+                st.markdown(clean_message)
+
+            with st.chat_message("assistant"):
+                with st.spinner("NutrioMeals AI is thinking..."):
+                    try:
+                        response = requests.post(
+                            f"{API_BASE}/chatbot/ask",
+                            headers=headers(),
+                            json={
+                                "message": clean_message,
+                                "history": history,
+                            },
+                            timeout=90,
+                        )
+                    except requests.RequestException as exc:
+                        answer = f"Request failed: {exc}"
+                        st.error(answer)
+                    else:
+                        if response.status_code == 200:
+                            response_data = response.json()
+                            answer = response_data.get(
+                                "answer",
+                                "The chatbot returned no answer.",
+                            )
+
+                            st.markdown(answer)
+
+                            with st.expander("Response metadata"):
+                                st.json(
+                                    {
+                                        "http_status": response.status_code,
+                                        "model": response_data.get("model"),
+                                        "scope": response_data.get("scope"),
+                                    }
+                                )
+                        else:
+                            try:
+                                error_data = response.json()
+                            except Exception:
+                                error_data = {"detail": response.text}
+
+                            detail = error_data.get(
+                                "detail",
+                                "Chatbot request failed.",
+                            )
+
+                            if isinstance(detail, dict):
+                                answer = detail.get(
+                                    "message",
+                                    str(detail),
+                                )
+                            else:
+                                answer = str(detail)
+
+                            st.error(
+                                f"HTTP {response.status_code}: {answer}"
+                            )
+
+            st.session_state.chatbot_messages.append(
+                {
+                    "role": "assistant",
+                    "content": answer,
+                }
+            )
+
+    st.divider()
+
+    with st.expander("Manual chatbot endpoint test"):
+        manual_message = st.text_area(
+            "Message",
+            value="What is the status of my subscription?",
+            key="chatbot_manual_message",
+        )
+
+        include_history = st.checkbox(
+            "Include current conversation history",
+            value=True,
+            key="chatbot_manual_history",
+        )
+
+        if st.button(
+            "POST /chatbot/ask",
+            key="chatbot_manual_send",
+            use_container_width=True,
+        ):
+            payload = {
+                "message": manual_message.strip(),
+                "history": (
+                    [
+                        {
+                            "role": item.get("role"),
+                            "content": item.get("content"),
+                        }
+                        for item in st.session_state.chatbot_messages[-10:]
+                        if item.get("role") in {"user", "assistant"}
+                        and item.get("content")
+                    ]
+                    if include_history
+                    else []
+                ),
+            }
+
+            api_request(
+                "POST",
+                "/chatbot/ask",
+                json=payload,
+                timeout=90,
+            )
+
 
 
 # ================= CUSTOM ENDPOINT =================

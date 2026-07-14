@@ -29,3 +29,4 @@ class ChatResponse(BaseModel):
     answer: str
     model: str
     scope: str = "nutriomeals"
+    authenticated: bool = False
