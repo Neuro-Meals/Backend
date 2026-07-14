@@ -49,6 +49,26 @@ respond briefly:
 "I can only assist with NutrioMeals, meal plans, nutrition,
 subscriptions, payments, orders, and deliveries."
 
+ANONYMOUS USER RULES
+
+When the visitor is not authenticated:
+
+- Answer general questions about NutrioMeals.
+- Explain registration, verification, plans, subscriptions, payments,
+  orders, deliveries, and general nutrition.
+- Do not claim to know the visitor's subscription, order, payment,
+  delivery, profile, or account status.
+- If the visitor asks for personal account information, tell them to sign in.
+- Never guess personal information.
+
+AUTHENTICATED USER RULES
+
+When authenticated user context is available:
+
+- You may answer using only the context explicitly provided.
+- Do not invent information that is absent from the context.
+- Never reveal another user's information.
+
 IMPORTANT SAFETY AND ACCURACY RULES
 
 - Do not diagnose medical conditions.
@@ -70,28 +90,52 @@ IMPORTANT SAFETY AND ACCURACY RULES
 """
 
 
+def enum_value(value: Any) -> Any:
+    """
+    Return the value of an Enum or the original value.
+    """
+
+    if value is None:
+        return None
+
+    return value.value if hasattr(value, "value") else value
+
+
 def build_user_context(
     db: Session,
     user: User | None,
 ) -> str:
+    """
+    Build context for authenticated and anonymous chatbot visitors.
+    """
+
     if user is None:
         return """
 CURRENT USER CONTEXT
 
-The visitor is not authenticated.
+Authentication status: Anonymous visitor.
 
-Rules for anonymous visitors:
+The visitor is not logged in.
 
-- You may explain NutrioMeals registration and email verification.
-- You may explain available meals and meal plans.
-- You may explain how subscriptions and Tap payments work.
-- You may explain general order and delivery processes.
-- You may answer general nutrition questions within the allowed scope.
-- Do not claim that the visitor has a subscription.
-- Do not claim that the visitor completed a payment.
-- Do not provide personal order, delivery, payment, or subscription details.
-- For personal account questions, ask the visitor to sign in.
-"""
+You may:
+- Explain how NutrioMeals registration works.
+- Explain email OTP verification.
+- Explain available meals and meal plans generally.
+- Explain how subscriptions work.
+- Explain Tap payment steps generally.
+- Explain order and delivery processes generally.
+- Answer general nutrition questions within the allowed scope.
+
+You must not:
+- Claim that this visitor has a subscription.
+- Claim that this visitor completed a payment.
+- Claim that this visitor has an order or delivery.
+- Provide personal account information.
+- Guess the visitor's identity or account status.
+
+If the visitor asks about their personal subscription, payment, order,
+delivery, or profile, tell them to sign in first.
+""".strip()
 
     subscription = (
         db.query(Subscription)
@@ -109,32 +153,28 @@ Rules for anonymous visitors:
         .first()
     )
 
+    fitness_goal = getattr(user, "fitness_goal", None)
+
     context_lines = [
         "CURRENT AUTHENTICATED USER CONTEXT",
+        "Authentication status: Authenticated",
         f"User ID: {user.id}",
         f"Name: {user.first_name} {user.last_name}",
-        f"Role: {getattr(user.role, 'value', user.role)}",
+        f"Role: {enum_value(user.role)}",
         (
-            f"Location: "
+            "Location: "
             f"{getattr(user, 'location', None) or 'Not provided'}"
         ),
         (
-            f"Dietary preference: "
+            "Dietary preference: "
             f"{getattr(user, 'dietary_preference', None) or 'Not provided'}"
+        ),
+        (
+            "Fitness goal: "
+            f"{enum_value(fitness_goal) or 'Not provided'}"
         ),
         f"Allergies: {getattr(user, 'allergies', None) or []}",
     ]
-
-    fitness_goal = getattr(user, "fitness_goal", None)
-
-    context_lines.append(
-        "Fitness goal: "
-        + (
-            getattr(fitness_goal, "value", fitness_goal)
-            if fitness_goal
-            else "Not provided"
-        )
-    )
 
     if not subscription:
         context_lines.extend(
@@ -158,31 +198,32 @@ Rules for anonymous visitors:
     context_lines.extend(
         [
             f"Subscription ID: {subscription.id}",
-            (
-                "Subscription status: "
-                f"{getattr(subscription.status, 'value', subscription.status)}"
-            ),
-            (
-                "Payment status: "
-                f"{getattr(subscription.payment_status, 'value', subscription.payment_status)}"
-            ),
+            f"Subscription status: {enum_value(subscription.status)}",
+            f"Payment status: {enum_value(subscription.payment_status)}",
             f"Plan ID: {subscription.plan_id}",
             f"Plan name: {plan.name_en if plan else 'Unknown'}",
             f"Plan amount: {subscription.amount}",
             f"Start date: {subscription.start_date}",
             f"End date: {subscription.end_date}",
-            f"Paused at: {subscription.paused_at}",
+            (
+                "Paused at: "
+                f"{getattr(subscription, 'paused_at', None)}"
+            ),
         ]
     )
 
     return "\n".join(context_lines)
 
+
 def build_chat_input(
     history: list[ChatHistoryMessage],
     message: str,
 ) -> list[dict[str, Any]]:
-    maximum_history = settings.CHATBOT_MAX_HISTORY_MESSAGES
+    """
+    Build the conversation input sent to the OpenAI Responses API.
+    """
 
+    maximum_history = settings.CHATBOT_MAX_HISTORY_MESSAGES
     trimmed_history = history[-maximum_history:]
 
     input_messages: list[dict[str, Any]] = []
@@ -191,14 +232,14 @@ def build_chat_input(
         input_messages.append(
             {
                 "role": history_item.role,
-                "content": history_item.content,
+                "content": history_item.content.strip(),
             }
         )
 
     input_messages.append(
         {
             "role": "user",
-            "content": message,
+            "content": message.strip(),
         }
     )
 
@@ -209,13 +250,23 @@ def build_safety_identifier(
     user: User | None,
     anonymous_identifier: str | None = None,
 ) -> str:
-    if user:
+    """
+    Build a stable hashed safety identifier.
+
+    Authenticated users:
+        nutriomeals-user-{user_id}
+
+    Anonymous users:
+        nutriomeals-anonymous-{hashed IP source}
+
+    The raw IP address is never sent directly to OpenAI.
+    """
+
+    if user is not None:
         raw_value = f"nutriomeals-user-{user.id}"
     else:
-        raw_value = (
-            f"nutriomeals-anonymous-"
-            f"{anonymous_identifier or 'visitor'}"
-        )
+        visitor_value = anonymous_identifier or "unknown-visitor"
+        raw_value = f"nutriomeals-anonymous-{visitor_value}"
 
     return hashlib.sha256(
         raw_value.encode("utf-8")
@@ -226,6 +277,10 @@ def moderate_message(
     client: OpenAI,
     message: str,
 ) -> bool:
+    """
+    Return True when OpenAI moderation flags the user message.
+    """
+
     moderation = client.moderations.create(
         model="omni-moderation-latest",
         input=message,
@@ -242,7 +297,20 @@ def generate_chatbot_answer(
     user: User | None,
     message: str,
     history: list[ChatHistoryMessage],
+    anonymous_identifier: str | None = None,
 ) -> str:
+    """
+    Generate a NutrioMeals chatbot answer.
+
+    For logged-in visitors, the safety identifier is based on the user ID.
+    For anonymous visitors, it is based on a hashed network identifier.
+    """
+
+    clean_message = message.strip()
+
+    if not clean_message:
+        raise RuntimeError("Chatbot message cannot be empty")
+
     if not settings.OPENAI_API_KEY:
         raise RuntimeError(
             "OPENAI_API_KEY is not configured"
@@ -252,36 +320,39 @@ def generate_chatbot_answer(
         api_key=settings.OPENAI_API_KEY,
     )
 
-    if moderate_message(client, message):
-        return (
-            "I cannot help with that request. I can assist with "
-            "NutrioMeals, meal plans, nutrition, subscriptions, "
-            "payments, orders, and deliveries."
+    try:
+        if moderate_message(client, clean_message):
+            return (
+                "I cannot help with that request. I can assist with "
+                "NutrioMeals, meal plans, nutrition, subscriptions, "
+                "payments, orders, and deliveries."
+            )
+
+        user_context = build_user_context(
+            db=db,
+            user=user,
         )
 
-    user_context = build_user_context(
-        db=db,
-        user=user,
-    )
+        instructions = (
+            NUTRIOMEALS_SYSTEM_INSTRUCTIONS
+            + "\n\n"
+            + user_context
+        )
 
-    instructions = (
-        NUTRIOMEALS_SYSTEM_INSTRUCTIONS
-        + "\n\n"
-        + user_context
-    )
-
-    try:
         response = client.responses.create(
             model=settings.OPENAI_MODEL,
             instructions=instructions,
             input=build_chat_input(
                 history=history,
-                message=message,
+                message=clean_message,
             ),
             max_output_tokens=(
                 settings.CHATBOT_MAX_OUTPUT_TOKENS
             ),
-            safety_identifier=build_safety_identifier(user),
+            safety_identifier=build_safety_identifier(
+                user=user,
+                anonymous_identifier=anonymous_identifier,
+            ),
             store=False,
         )
 

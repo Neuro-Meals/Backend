@@ -45,22 +45,24 @@ def ask_chatbot(
 ):
     ip_address = get_client_ip(request)
 
-    # All users are protected by an IP-based rate limit.
+    # General protection applying to every request.
     rate_limit(
         key=f"rate:chatbot:ip:{ip_address}",
         limit=30,
         window_seconds=600,
     )
 
-    if current_user:
-        # Logged-in users receive a higher limit and personalized context.
+    if current_user is not None:
+        # Logged-in users:
+        # maximum 20 messages every 10 minutes per account.
         rate_limit(
             key=f"rate:chatbot:user:{current_user.id}",
             limit=20,
             window_seconds=600,
         )
     else:
-        # Anonymous visitors receive a lower allowance.
+        # Anonymous visitors:
+        # maximum 10 messages every 10 minutes per IP.
         rate_limit(
             key=f"rate:chatbot:anonymous:{ip_address}",
             limit=10,
@@ -71,11 +73,17 @@ def ask_chatbot(
         answer = generate_chatbot_answer(
             db=db,
             user=current_user,
-            message=payload.message.strip(),
+            message=payload.message,
             history=payload.history,
+
+            # For a logged-in user, the service uses user.id.
+            # For an anonymous visitor, it hashes this identifier.
+            anonymous_identifier=ip_address,
         )
 
     except RuntimeError as exc:
+        # Log the original error internally.
+        # Do not expose API or provider details to the frontend.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The AI assistant is temporarily unavailable",

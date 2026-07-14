@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class ChatHistoryMessage(BaseModel):
     role: Literal["user", "assistant"]
+
     content: str = Field(
         ...,
         min_length=1,
