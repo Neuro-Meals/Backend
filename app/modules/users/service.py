@@ -17,13 +17,26 @@ def normalize_phone(phone: str) -> str:
     )
 
 
+def get_user_by_id(
+    db: Session,
+    user_id: int,
+) -> User | None:
+    return (
+        db.query(User)
+        .filter(User.id == user_id)
+        .first()
+    )
+
+
 def get_user_by_email(
     db: Session,
     email: str,
 ) -> User | None:
+    normalized_email = email.strip().lower()
+
     return (
         db.query(User)
-        .filter(User.email == email.strip().lower())
+        .filter(User.email == normalized_email)
         .first()
     )
 
@@ -66,7 +79,7 @@ def create_user(
             datetime.utcnow() + timedelta(minutes=10)
         ),
 
-        # Profile information will be completed later.
+        # These values will be completed later from the profile page.
         gender=None,
         age=None,
         height_cm=None,
