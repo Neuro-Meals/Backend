@@ -3,7 +3,19 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from openai import OpenAI, OpenAIError
+import logging
+import random
+import time
+
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    AuthenticationError,
+    BadRequestError,
+    OpenAI,
+    OpenAIError,
+    RateLimitError,
+)
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -14,6 +26,8 @@ from app.modules.subscriptions.models import (
     SubscriptionStatus,
 )
 from app.modules.users.models import User
+
+logger = logging.getLogger(__name__)
 
 
 NUTRIOMEALS_SYSTEM_INSTRUCTIONS = """
@@ -276,20 +290,86 @@ def build_safety_identifier(
 def moderate_message(
     client: OpenAI,
     message: str,
+    max_attempts: int = 2,
 ) -> bool:
     """
-    Return True when OpenAI moderation flags the user message.
+    Check the user message with OpenAI moderation.
+
+    Returns:
+        True: message was flagged
+        False: message was not flagged, or moderation was temporarily
+               unavailable because of a rate limit or connection issue.
+
+    Authentication and invalid-request errors are not silently ignored.
     """
 
-    moderation = client.moderations.create(
-        model="omni-moderation-latest",
-        input=message,
-    )
+    for attempt in range(max_attempts):
+        try:
+            moderation = client.moderations.create(
+                model="omni-moderation-latest",
+                input=message,
+            )
 
-    if not moderation.results:
-        return False
+            if not moderation.results:
+                return False
 
-    return bool(moderation.results[0].flagged)
+            return bool(moderation.results[0].flagged)
+
+        except RateLimitError as exc:
+            logger.warning(
+                "Moderation rate limited on attempt %s/%s: %s",
+                attempt + 1,
+                max_attempts,
+                exc,
+            )
+
+            if attempt < max_attempts - 1:
+                delay = (2 ** attempt) + random.uniform(0, 0.5)
+                time.sleep(delay)
+                continue
+
+            # Fail open for temporary moderation rate limits.
+            # The main model still receives strict system instructions.
+            logger.warning(
+                "Moderation unavailable after retries; "
+                "continuing with chatbot response generation."
+            )
+            return False
+
+        except APIConnectionError as exc:
+            logger.warning(
+                "Moderation connection failed; continuing without "
+                "standalone moderation: %s",
+                exc,
+            )
+            return False
+
+        except AuthenticationError as exc:
+            raise RuntimeError(
+                "OpenAI authentication failed during moderation"
+            ) from exc
+
+        except BadRequestError as exc:
+            raise RuntimeError(
+                f"OpenAI rejected the moderation request: {exc}"
+            ) from exc
+
+        except APIStatusError as exc:
+            logger.warning(
+                "Moderation API returned HTTP %s; continuing: %s",
+                exc.status_code,
+                exc,
+            )
+            return False
+
+        except OpenAIError as exc:
+            logger.warning(
+                "Moderation temporarily unavailable; continuing: %s",
+                exc,
+            )
+            return False
+
+    return False
 
 
 def generate_chatbot_answer(
@@ -299,13 +379,6 @@ def generate_chatbot_answer(
     history: list[ChatHistoryMessage],
     anonymous_identifier: str | None = None,
 ) -> str:
-    """
-    Generate a NutrioMeals chatbot answer.
-
-    For logged-in visitors, the safety identifier is based on the user ID.
-    For anonymous visitors, it is based on a hashed network identifier.
-    """
-
     clean_message = message.strip()
 
     if not clean_message:
@@ -320,25 +393,31 @@ def generate_chatbot_answer(
         api_key=settings.OPENAI_API_KEY,
     )
 
+    # Try moderation first, but a temporary moderation rate limit
+    # will no longer prevent the chatbot from answering.
+    if moderate_message(
+        client=client,
+        message=clean_message,
+        max_attempts=2,
+    ):
+        return (
+            "I cannot help with that request. I can assist with "
+            "NutrioMeals, meal plans, nutrition, subscriptions, "
+            "payments, orders, and deliveries."
+        )
+
+    user_context = build_user_context(
+        db=db,
+        user=user,
+    )
+
+    instructions = (
+        NUTRIOMEALS_SYSTEM_INSTRUCTIONS
+        + "\n\n"
+        + user_context
+    )
+
     try:
-        if moderate_message(client, clean_message):
-            return (
-                "I cannot help with that request. I can assist with "
-                "NutrioMeals, meal plans, nutrition, subscriptions, "
-                "payments, orders, and deliveries."
-            )
-
-        user_context = build_user_context(
-            db=db,
-            user=user,
-        )
-
-        instructions = (
-            NUTRIOMEALS_SYSTEM_INSTRUCTIONS
-            + "\n\n"
-            + user_context
-        )
-
         response = client.responses.create(
             model=settings.OPENAI_MODEL,
             instructions=instructions,
@@ -355,6 +434,31 @@ def generate_chatbot_answer(
             ),
             store=False,
         )
+
+    except AuthenticationError as exc:
+        raise RuntimeError(
+            "OpenAI authentication failed. Check OPENAI_API_KEY."
+        ) from exc
+
+    except RateLimitError as exc:
+        raise RuntimeError(
+            "OpenAI response rate limit or quota was exceeded."
+        ) from exc
+
+    except BadRequestError as exc:
+        raise RuntimeError(
+            f"OpenAI rejected the response request: {exc}"
+        ) from exc
+
+    except APIConnectionError as exc:
+        raise RuntimeError(
+            "The server could not connect to OpenAI."
+        ) from exc
+
+    except APIStatusError as exc:
+        raise RuntimeError(
+            f"OpenAI returned HTTP {exc.status_code}: {exc}"
+        ) from exc
 
     except OpenAIError as exc:
         raise RuntimeError(
