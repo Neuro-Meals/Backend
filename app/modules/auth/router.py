@@ -64,7 +64,10 @@ def get_current_subscription_payload(db: Session, user_id: int):
     )
 
 
-def build_logged_in_user(db: Session, user: User) -> LoggedInUser:
+def build_logged_in_user(
+    db: Session,
+    user: User,
+) -> LoggedInUser:
     return LoggedInUser(
         id=user.id,
         first_name=user.first_name,
@@ -73,14 +76,26 @@ def build_logged_in_user(db: Session, user: User) -> LoggedInUser:
         phone=user.phone,
         role=user.role.value,
         permissions=get_user_permissions(db, user),
+
+        location=user.location,
+        address=user.address,
+
         gender=user.gender.value if user.gender else None,
         age=user.age,
         height_cm=user.height_cm,
         weight_kg=user.weight_kg,
-        fitness_goal=user.fitness_goal.value if user.fitness_goal else None,
+        fitness_goal=(
+            user.fitness_goal.value
+            if user.fitness_goal
+            else None
+        ),
         dietary_preference=user.dietary_preference,
-        allergies=user.allergies,
-        subscription=get_current_subscription_payload(db, user.id),
+        allergies=user.allergies or [],
+
+        subscription=get_current_subscription_payload(
+            db,
+            user.id,
+        ),
     )
 
 
