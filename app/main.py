@@ -28,6 +28,9 @@ from app.modules.dashboard.router import router as dashboard_router
 from app.modules.locations.router import router as locations_router
 from app.modules.chatbot.router import router as chatbot_router
 from app.modules.chef.router import router as chef_router
+from app.modules.chef.admin_router import (
+    router as chef_admin_router,
+)
 
 
 # Create database tables
@@ -74,6 +77,7 @@ app.include_router(dashboard_router)
 app.include_router(locations_router)
 app.include_router(chatbot_router)
 app.include_router(chef_router)
+app.include_router(chef_admin_router)
 
 @app.get("/")
 def root():
