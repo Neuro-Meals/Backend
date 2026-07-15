@@ -78,6 +78,7 @@ menu = st.sidebar.selectbox(
         "Orders",
         "Deliveries",
         "Drivers",
+        "Chef",
         "Locations",
         "Payments",
         "Reports",
@@ -120,19 +121,6 @@ if menu == "Auth":
         location = st.text_input("Location", "Dar es Salaam")
         address = st.text_input("Address", "Mbezi Beach")
 
-        gender = st.selectbox("Gender", ["male", "female", "other"])
-        age = st.number_input("Age", min_value=1, value=25)
-        height_cm = st.number_input("Height CM", min_value=1.0, value=175.0)
-        weight_kg = st.number_input("Weight KG", min_value=1.0, value=70.0)
-
-        fitness_goal = st.selectbox(
-            "Fitness Goal",
-            ["weight_loss", "muscle_gain", "maintenance", "healthy_lifestyle"],
-        )
-
-        dietary_preference = st.text_input("Dietary Preference", "high protein")
-        allergies_text = st.text_input("Allergies comma separated", "nuts,dairy")
-
         if st.button("Register"):
             payload = {
                 "first_name": first_name,
@@ -142,13 +130,6 @@ if menu == "Auth":
                 "password": password,
                 "location": location,
                 "address": address,
-                "gender": gender,
-                "age": age,
-                "height_cm": height_cm,
-                "weight_kg": weight_kg,
-                "fitness_goal": fitness_goal,
-                "dietary_preference": dietary_preference,
-                "allergies": [x.strip() for x in allergies_text.split(",") if x.strip()],
             }
 
             res = requests.post(f"{API_BASE}/auth/register", json=payload)
@@ -320,7 +301,7 @@ elif menu == "Users":
     search = st.text_input("Search")
     role = st.selectbox(
         "Role Filter",
-        ["", "customer", "admin", "super_admin", "nutrition_manager", "delivery_manager", "driver", "finance_manager"],
+        ["", "customer", "admin", "super_admin", "nutrition_manager", "delivery_manager", "driver", "finance_manager", "chef"],
     )
     page = st.number_input("Page", min_value=1, value=1)
     limit = st.number_input("Limit", min_value=1, max_value=100, value=10)
@@ -344,7 +325,7 @@ elif menu == "Users":
     user_id = st.number_input("User ID", min_value=1)
     new_role = st.selectbox(
         "New Role",
-        ["customer", "admin", "super_admin", "nutrition_manager", "delivery_manager", "driver", "finance_manager"],
+        ["customer", "admin", "super_admin", "nutrition_manager", "delivery_manager", "driver", "finance_manager", "chef"],
     )
 
     if st.button("Update Role"):
@@ -1409,6 +1390,666 @@ elif menu == "Drivers":
         )
         if st.button("Deactivate Driver", key="driver_delete_btn"):
             api_request("DELETE", f"/driver/{int(driver_id)}")
+
+
+
+# ================= CHEF =================
+
+elif menu == "Chef":
+    st.header("Chef and Kitchen API Tester")
+
+    current_role = (st.session_state.user or {}).get("role")
+    st.caption(
+        "Chef accounts use the Kitchen Operations tabs. "
+        "Admin and Super Admin accounts use both Kitchen Operations and Chef Management."
+    )
+
+    kitchen_tab, admin_tab = st.tabs(
+        [
+            "Kitchen Operations",
+            "Admin Chef Management",
+        ]
+    )
+
+    # ------------------------------------------------------------
+    # CHEF / KITCHEN OPERATIONS
+    # ------------------------------------------------------------
+    with kitchen_tab:
+        st.subheader("Kitchen Operations")
+
+        (
+            dashboard_tab,
+            orders_tab,
+            one_order_tab,
+            prepare_tab,
+            ready_tab,
+            drivers_tab,
+            assign_tab,
+        ) = st.tabs(
+            [
+                "Dashboard",
+                "Kitchen Orders",
+                "Order Details",
+                "Start Preparing",
+                "Mark Ready",
+                "Drivers",
+                "Assign Driver",
+            ]
+        )
+
+        with dashboard_tab:
+            st.write(
+                "View order totals, kitchen queue, deliveries needed, "
+                "and available drivers."
+            )
+
+            if st.button(
+                "GET /chef/dashboard",
+                key="chef_dashboard_btn",
+                use_container_width=True,
+            ):
+                response = api_request("GET", "/chef/dashboard")
+
+                if response is not None and response.status_code == 200:
+                    data = response.json()
+
+                    first_row = st.columns(4)
+                    first_row[0].metric(
+                        "Pending",
+                        data.get("pending_orders", 0),
+                    )
+                    first_row[1].metric(
+                        "Confirmed",
+                        data.get("confirmed_orders", 0),
+                    )
+                    first_row[2].metric(
+                        "Preparing",
+                        data.get("preparing_orders", 0),
+                    )
+                    first_row[3].metric(
+                        "Ready",
+                        data.get("ready_for_delivery_orders", 0),
+                    )
+
+                    second_row = st.columns(4)
+                    second_row[0].metric(
+                        "Deliveries Needed",
+                        data.get("deliveries_needed", 0),
+                    )
+                    second_row[1].metric(
+                        "Assigned Deliveries",
+                        data.get("assigned_deliveries", 0),
+                    )
+                    second_row[2].metric(
+                        "Available Drivers",
+                        data.get("available_drivers", 0),
+                    )
+                    second_row[3].metric(
+                        "Active Drivers",
+                        data.get("total_active_drivers", 0),
+                    )
+
+        with orders_tab:
+            order_status = st.selectbox(
+                "Order Status",
+                [
+                    "",
+                    "pending",
+                    "confirmed",
+                    "preparing",
+                    "ready_for_delivery",
+                    "out_for_delivery",
+                    "delivered",
+                    "cancelled",
+                ],
+                key="chef_orders_status",
+            )
+            search = st.text_input(
+                "Search order number, customer, phone, or address",
+                key="chef_orders_search",
+            )
+            delivery_date = st.text_input(
+                "Delivery Date (YYYY-MM-DD, optional)",
+                key="chef_orders_delivery_date",
+            )
+            page = st.number_input(
+                "Page",
+                min_value=1,
+                value=1,
+                key="chef_orders_page",
+            )
+            limit = st.number_input(
+                "Limit",
+                min_value=1,
+                max_value=100,
+                value=20,
+                key="chef_orders_limit",
+            )
+
+            if st.button(
+                "GET /chef/orders",
+                key="chef_orders_btn",
+                use_container_width=True,
+            ):
+                params = {
+                    "page": int(page),
+                    "limit": int(limit),
+                }
+
+                if order_status:
+                    params["status"] = order_status
+                if search:
+                    params["search"] = search.strip()
+                if delivery_date:
+                    params["delivery_date"] = delivery_date.strip()
+
+                response = api_request(
+                    "GET",
+                    "/chef/orders",
+                    params=params,
+                )
+
+                if response is not None and response.status_code == 200:
+                    payload = response.json()
+                    orders = payload.get("data", []) if isinstance(payload, dict) else []
+
+                    if not orders:
+                        st.info("No kitchen orders matched the selected filters.")
+
+                    for order in orders:
+                        customer = order.get("customer") or {}
+                        delivery = order.get("delivery") or {}
+
+                        title = (
+                            f"{order.get('order_number', 'Order')} — "
+                            f"{order.get('status', 'unknown')}"
+                        )
+
+                        with st.expander(title, expanded=False):
+                            left, right = st.columns(2)
+
+                            with left:
+                                st.write("### Customer")
+                                st.write(
+                                    f"**Name:** {customer.get('full_name') or 'N/A'}"
+                                )
+                                st.write(
+                                    f"**Phone:** {customer.get('phone') or 'N/A'}"
+                                )
+                                st.write(
+                                    f"**Email:** {customer.get('email') or 'N/A'}"
+                                )
+                                st.write(
+                                    f"**Address:** {order.get('delivery_address') or 'N/A'}"
+                                )
+                                st.write(
+                                    f"**Notes:** {order.get('delivery_notes') or 'None'}"
+                                )
+
+                            with right:
+                                st.write("### Order / Delivery")
+                                st.write(f"**Order ID:** {order.get('id')}")
+                                st.write(
+                                    f"**Delivery Date:** {order.get('delivery_date') or 'Not set'}"
+                                )
+                                st.write(
+                                    f"**Delivery ID:** {delivery.get('id') or 'Not created'}"
+                                )
+                                st.write(
+                                    f"**Driver ID:** {delivery.get('driver_id') or 'Not assigned'}"
+                                )
+                                st.write(
+                                    f"**Delivery Status:** {delivery.get('status') or 'Not created'}"
+                                )
+
+                            st.write("### Meal Items")
+                            st.json(order.get("items") or [])
+
+        with one_order_tab:
+            order_id = st.number_input(
+                "Order ID",
+                min_value=1,
+                value=1,
+                key="chef_get_order_id",
+            )
+
+            if st.button(
+                "GET /chef/orders/{order_id}",
+                key="chef_get_order_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "GET",
+                    f"/chef/orders/{int(order_id)}",
+                )
+
+        with prepare_tab:
+            order_id = st.number_input(
+                "Order ID",
+                min_value=1,
+                value=1,
+                key="chef_prepare_order_id",
+            )
+            st.info(
+                "Allowed transition: pending/confirmed → preparing"
+            )
+
+            if st.button(
+                "Start Preparing",
+                key="chef_prepare_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "PATCH",
+                    f"/chef/orders/{int(order_id)}/start-preparing",
+                )
+
+        with ready_tab:
+            order_id = st.number_input(
+                "Order ID",
+                min_value=1,
+                value=1,
+                key="chef_ready_order_id",
+            )
+            st.info(
+                "Allowed transition: preparing → ready_for_delivery"
+            )
+
+            if st.button(
+                "Mark Ready for Delivery",
+                key="chef_ready_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "PATCH",
+                    f"/chef/orders/{int(order_id)}/ready",
+                )
+
+        with drivers_tab:
+            available_only = st.checkbox(
+                "Available drivers only",
+                value=True,
+                key="chef_drivers_available_only",
+            )
+
+            if st.button(
+                "GET /chef/drivers",
+                key="chef_drivers_btn",
+                use_container_width=True,
+            ):
+                response = api_request(
+                    "GET",
+                    "/chef/drivers",
+                    params={"available_only": available_only},
+                )
+
+                if response is not None and response.status_code == 200:
+                    drivers = response.json()
+
+                    if isinstance(drivers, list) and drivers:
+                        st.dataframe(
+                            [
+                                {
+                                    "id": driver.get("id"),
+                                    "name": driver.get("full_name"),
+                                    "phone": driver.get("phone"),
+                                    "location": driver.get("location"),
+                                    "active_deliveries": driver.get("active_deliveries"),
+                                    "available": driver.get("available"),
+                                }
+                                for driver in drivers
+                            ],
+                            use_container_width=True,
+                        )
+                    elif isinstance(drivers, list):
+                        st.info("No drivers matched the filter.")
+
+        with assign_tab:
+            order_id = st.number_input(
+                "Ready Order ID",
+                min_value=1,
+                value=1,
+                key="chef_assign_order_id",
+            )
+            driver_id = st.number_input(
+                "Driver ID",
+                min_value=1,
+                value=1,
+                key="chef_assign_driver_id",
+            )
+            scheduled_at = st.text_input(
+                "Scheduled At (ISO datetime, optional)",
+                placeholder="2026-07-16T13:00:00",
+                key="chef_assign_scheduled_at",
+            )
+
+            if st.button(
+                "Assign Driver to Ready Order",
+                key="chef_assign_driver_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "POST",
+                    f"/chef/orders/{int(order_id)}/assign-driver",
+                    json={
+                        "driver_id": int(driver_id),
+                        "scheduled_at": scheduled_at.strip() or None,
+                    },
+                )
+
+    # ------------------------------------------------------------
+    # ADMIN / SUPER ADMIN CHEF MANAGEMENT
+    # ------------------------------------------------------------
+    with admin_tab:
+        st.subheader("Admin Chef Management")
+
+        if current_role not in {"admin", "super_admin"}:
+            st.warning(
+                "These endpoints require an Admin or Super Admin account."
+            )
+
+        (
+            create_tab,
+            list_tab,
+            get_tab,
+            update_tab,
+            status_tab,
+            existing_tab,
+            remove_tab,
+        ) = st.tabs(
+            [
+                "Create Chef",
+                "List Chefs",
+                "Get Chef",
+                "Update Chef",
+                "Activate / Deactivate",
+                "Assign Existing User",
+                "Remove Chef Role",
+            ]
+        )
+
+        with create_tab:
+            col1, col2 = st.columns(2)
+
+            with col1:
+                first_name = st.text_input(
+                    "First Name",
+                    key="admin_chef_create_first_name",
+                )
+                last_name = st.text_input(
+                    "Last Name",
+                    key="admin_chef_create_last_name",
+                )
+                email = st.text_input(
+                    "Email",
+                    key="admin_chef_create_email",
+                )
+                phone = st.text_input(
+                    "Phone",
+                    key="admin_chef_create_phone",
+                )
+
+            with col2:
+                password = st.text_input(
+                    "Temporary Password",
+                    type="password",
+                    key="admin_chef_create_password",
+                )
+                location = st.text_input(
+                    "Location",
+                    key="admin_chef_create_location",
+                )
+                address = st.text_input(
+                    "Address",
+                    key="admin_chef_create_address",
+                )
+
+            if st.button(
+                "POST /admin/chefs/",
+                key="admin_chef_create_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "POST",
+                    "/admin/chefs/",
+                    json={
+                        "first_name": first_name.strip(),
+                        "last_name": last_name.strip(),
+                        "email": email.strip(),
+                        "phone": phone.strip(),
+                        "password": password,
+                        "location": location.strip() or None,
+                        "address": address.strip() or None,
+                    },
+                )
+
+        with list_tab:
+            search = st.text_input(
+                "Search chef",
+                key="admin_chef_list_search",
+            )
+            active_filter = st.selectbox(
+                "Active Filter",
+                ["", "true", "false"],
+                key="admin_chef_list_active",
+            )
+            page = st.number_input(
+                "Page",
+                min_value=1,
+                value=1,
+                key="admin_chef_list_page",
+            )
+            limit = st.number_input(
+                "Limit",
+                min_value=1,
+                max_value=100,
+                value=20,
+                key="admin_chef_list_limit",
+            )
+
+            if st.button(
+                "GET /admin/chefs/",
+                key="admin_chef_list_btn",
+                use_container_width=True,
+            ):
+                params = {
+                    "page": int(page),
+                    "limit": int(limit),
+                }
+                if search:
+                    params["search"] = search.strip()
+                if active_filter:
+                    params["is_active"] = active_filter
+
+                response = api_request(
+                    "GET",
+                    "/admin/chefs/",
+                    params=params,
+                )
+
+                if response is not None and response.status_code == 200:
+                    payload = response.json()
+                    chefs = payload.get("data", []) if isinstance(payload, dict) else []
+
+                    if chefs:
+                        st.dataframe(
+                            [
+                                {
+                                    "id": chef.get("id"),
+                                    "name": chef.get("full_name"),
+                                    "email": chef.get("email"),
+                                    "phone": chef.get("phone"),
+                                    "location": chef.get("location"),
+                                    "active": chef.get("is_active"),
+                                    "verified": chef.get("is_verified"),
+                                }
+                                for chef in chefs
+                            ],
+                            use_container_width=True,
+                        )
+                    else:
+                        st.info("No chefs found.")
+
+        with get_tab:
+            chef_id = st.number_input(
+                "Chef ID",
+                min_value=1,
+                value=1,
+                key="admin_chef_get_id",
+            )
+
+            if st.button(
+                "GET /admin/chefs/{chef_id}",
+                key="admin_chef_get_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "GET",
+                    f"/admin/chefs/{int(chef_id)}",
+                )
+
+        with update_tab:
+            chef_id = st.number_input(
+                "Chef ID",
+                min_value=1,
+                value=1,
+                key="admin_chef_update_id",
+            )
+            first_name = st.text_input(
+                "New First Name (optional)",
+                key="admin_chef_update_first_name",
+            )
+            last_name = st.text_input(
+                "New Last Name (optional)",
+                key="admin_chef_update_last_name",
+            )
+            email = st.text_input(
+                "New Email (optional)",
+                key="admin_chef_update_email",
+            )
+            phone = st.text_input(
+                "New Phone (optional)",
+                key="admin_chef_update_phone",
+            )
+            location = st.text_input(
+                "New Location (optional)",
+                key="admin_chef_update_location",
+            )
+            address = st.text_input(
+                "New Address (optional)",
+                key="admin_chef_update_address",
+            )
+            update_active = st.selectbox(
+                "Change Active Status",
+                ["do_not_change", "true", "false"],
+                key="admin_chef_update_active",
+            )
+
+            if st.button(
+                "PATCH /admin/chefs/{chef_id}",
+                key="admin_chef_update_btn",
+                use_container_width=True,
+            ):
+                payload = {}
+
+                if first_name.strip():
+                    payload["first_name"] = first_name.strip()
+                if last_name.strip():
+                    payload["last_name"] = last_name.strip()
+                if email.strip():
+                    payload["email"] = email.strip()
+                if phone.strip():
+                    payload["phone"] = phone.strip()
+                if location.strip():
+                    payload["location"] = location.strip()
+                if address.strip():
+                    payload["address"] = address.strip()
+                if update_active != "do_not_change":
+                    payload["is_active"] = update_active == "true"
+
+                if not payload:
+                    st.warning("Enter at least one field to update.")
+                else:
+                    api_request(
+                        "PATCH",
+                        f"/admin/chefs/{int(chef_id)}",
+                        json=payload,
+                    )
+
+        with status_tab:
+            chef_id = st.number_input(
+                "Chef ID",
+                min_value=1,
+                value=1,
+                key="admin_chef_status_id",
+            )
+
+            activate_col, deactivate_col = st.columns(2)
+
+            with activate_col:
+                if st.button(
+                    "Activate Chef",
+                    key="admin_chef_activate_btn",
+                    use_container_width=True,
+                ):
+                    api_request(
+                        "PATCH",
+                        f"/admin/chefs/{int(chef_id)}/activate",
+                    )
+
+            with deactivate_col:
+                if st.button(
+                    "Deactivate Chef",
+                    key="admin_chef_deactivate_btn",
+                    use_container_width=True,
+                ):
+                    api_request(
+                        "PATCH",
+                        f"/admin/chefs/{int(chef_id)}/deactivate",
+                    )
+
+        with existing_tab:
+            user_id = st.number_input(
+                "Existing User ID",
+                min_value=1,
+                value=1,
+                key="admin_chef_existing_user_id",
+            )
+            st.warning(
+                "This changes the existing user's primary role to chef."
+            )
+
+            if st.button(
+                "Assign Existing User as Chef",
+                key="admin_chef_existing_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "POST",
+                    "/admin/chefs/assign-existing-user",
+                    json={"user_id": int(user_id)},
+                )
+
+        with remove_tab:
+            chef_id = st.number_input(
+                "Chef ID",
+                min_value=1,
+                value=1,
+                key="admin_chef_remove_id",
+            )
+            st.warning(
+                "This removes the Chef role and changes the user back to Customer."
+            )
+
+            if st.button(
+                "Remove Chef Role",
+                key="admin_chef_remove_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "PATCH",
+                    f"/admin/chefs/{int(chef_id)}/remove-role",
+                )
 
 
 # ================= LOCATIONS =================
