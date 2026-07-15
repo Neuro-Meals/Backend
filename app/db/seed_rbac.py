@@ -18,6 +18,7 @@ ROLES = [
     ("delivery_manager", "Delivery manager"),
     ("driver", "Delivery driver"),
     ("finance_manager", "Finance manager"),
+    ("chef", "chef"),
 ]
 
 
@@ -108,6 +109,16 @@ ROLE_PERMISSIONS = {
         "reports.export",
         "analytics.view",
     ],
+    
+    "chef": [
+        "dashboard.view",
+        "dashboard",
+        "orders.view",
+        "orders.prepare",
+        "orders.ready",
+        "drivers.view",
+        "deliveries.assign",
+    ]
 }
 
 
