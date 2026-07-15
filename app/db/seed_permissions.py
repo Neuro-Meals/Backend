@@ -105,6 +105,14 @@ PERMISSIONS = [
     # Settings
     ("settings.view", "View settings"),
     ("settings.update", "Update settings"),
+    
+    # Chef / Kitchen
+    ("chef.dashboard", "View chef dashboard"),
+    ("chef.orders.view", "View kitchen orders"),
+    ("chef.orders.prepare", "Start order preparation"),
+    ("chef.orders.ready", "Mark order ready for delivery"),
+    ("chef.drivers.view", "View available drivers"),
+    ("chef.deliveries.assign", "Assign drivers to ready orders"),
 ]
 
 

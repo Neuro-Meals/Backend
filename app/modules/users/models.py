@@ -15,6 +15,7 @@ class UserRole(str, Enum):
     DELIVERY_MANAGER = "delivery_manager"
     DRIVER = "driver"
     FINANCE_MANAGER = "finance_manager"
+    CHEF = "chef"
 
 
 class FitnessGoal(str, Enum):

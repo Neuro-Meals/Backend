@@ -248,3 +248,14 @@ ssh -i ~/Downloads/adam_katani.pem ubuntu@13.48.55.140
 https://os.tap.company/acceptance/charges
 ```
 
+```
+ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'CHEF';
+```
+
+psql "$DATABASE_URL" -c "
+SELECT enumlabel
+FROM pg_enum
+JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+WHERE pg_type.typname = 'userrole';
+"
+
