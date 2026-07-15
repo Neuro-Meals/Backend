@@ -113,6 +113,24 @@ PERMISSIONS = [
     ("chef.orders.ready", "Mark order ready for delivery"),
     ("chef.drivers.view", "View available drivers"),
     ("chef.deliveries.assign", "Assign drivers to ready orders"),
+    
+    
+    # Chef administration
+    ("chefs.view", "View chefs"),
+    ("chefs.create", "Create chefs"),
+    ("chefs.update", "Update chefs"),
+    ("chefs.activate", "Activate chefs"),
+    ("chefs.deactivate", "Deactivate chefs"),
+    ("chefs.assign_role", "Assign chef role"),
+    ("chefs.remove_role", "Remove chef role"),
+
+# Chef kitchen operations
+    ("chef.dashboard", "View chef dashboard"),
+    ("chef.orders.view", "View kitchen orders"),
+    ("chef.orders.prepare", "Start order preparation"),
+    ("chef.orders.ready", "Mark order ready for delivery"),
+    ("chef.drivers.view", "View available drivers"),
+    ("chef.deliveries.assign", "Assign driver to ready order"),
 ]
 
 
