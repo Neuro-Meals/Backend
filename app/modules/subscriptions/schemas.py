@@ -120,3 +120,91 @@ class ChangePlanResult(BaseModel):
     plan_change: PlanChangeResponse
     requires_payment: bool
     amount_due: float
+    
+    
+class CustomerMealCategoryResponse(BaseModel):
+    id: int
+    name_en: str
+    name_ar: str | None = None
+
+
+class CustomerMealResponse(BaseModel):
+    id: int
+    name_en: str
+    name_ar: str | None = None
+    description_en: str | None = None
+    description_ar: str | None = None
+
+    quantity: int
+
+    calories: float | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
+
+    ingredients: list[str] | None = None
+    allergens: list[str] | None = None
+
+    image_url: str | None = None
+
+
+class CustomerDayCategoryResponse(BaseModel):
+    category: CustomerMealCategoryResponse
+    meals: list[CustomerMealResponse]
+
+
+class CustomerDayMenuResponse(BaseModel):
+    day_of_week: str
+    categories: list[CustomerDayCategoryResponse]
+
+
+class CustomerCurrentDayMenuResponse(BaseModel):
+    day_of_week: str
+    date: str
+    categories: list[CustomerDayCategoryResponse]
+
+
+class CustomerPlanDetailsResponse(BaseModel):
+    id: int
+    name_en: str
+    name_ar: str | None = None
+
+    description_en: str | None = None
+    description_ar: str | None = None
+
+    plan_type: str | None = None
+    goal: str | None = None
+
+    price: float
+    duration_days: int
+    meals_per_day: int
+    total_meals: int
+
+    image_url: str | None = None
+
+
+class CustomerSubscriptionDetailsResponse(BaseModel):
+    id: int
+    status: SubscriptionStatus
+    payment_status: PaymentStatus
+
+    amount: float
+
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    paused_at: datetime | None = None
+    cancelled_at: datetime | None = None
+
+    notes: str | None = None
+
+
+class MyCurrentSubscriptionDetailsResponse(BaseModel):
+    subscription: CustomerSubscriptionDetailsResponse
+    plan: CustomerPlanDetailsResponse
+
+    today: CustomerCurrentDayMenuResponse
+    tomorrow: CustomerCurrentDayMenuResponse
+
+    weekly_menu: list[CustomerDayMenuResponse]
+
+    model_config = ConfigDict(from_attributes=True)    
