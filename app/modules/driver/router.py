@@ -9,6 +9,7 @@ from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.deliveries.models import Delivery, DeliveryStatus
 from app.modules.deliveries.schemas import DeliveryResponse, UpdateDriverLocation
+from app.modules.notifications.models import Notification, NotificationChannel, NotificationType
 from app.modules.orders.models import Order, OrderStatus
 from app.modules.users.models import User, UserRole
 
@@ -75,6 +76,22 @@ def create_driver(
     db.add(driver)
     db.commit()
     db.refresh(driver)
+
+    welcome = Notification(
+        user_id=driver.id,
+        title="Welcome to the Nitro Delivery Team",
+        message=(
+            f"Hi {driver.first_name}, your driver account has been created. "
+            f"Login email: {driver.email} | Temporary password: {payload.password}. "
+            "Please change your password after first login."
+        ),
+        notification_type=NotificationType.GENERAL.value,
+        channel=NotificationChannel.IN_APP.value,
+        is_read=False,
+    )
+    db.add(welcome)
+    db.commit()
+
     return driver
 
 

@@ -87,8 +87,50 @@ def list_meals(
         .all()
     )
 
+    # Build response with category info included
+    category_ids = {m.category_id for m in meals}
+    categories = (
+        db.query(MealCategory)
+        .filter(MealCategory.id.in_(category_ids))
+        .all()
+        if category_ids else []
+    )
+    cat_map = {c.id: c for c in categories}
+
+    data = []
+    for m in meals:
+        cat = cat_map.get(m.category_id)
+        data.append({
+            "id": m.id,
+            "category_id": m.category_id,
+            "category_name": cat.name_en if cat else None,
+            "category": {
+                "id": cat.id,
+                "name_en": cat.name_en,
+                "name_ar": cat.name_ar,
+            } if cat else None,
+            "name_en": m.name_en,
+            "name_ar": m.name_ar,
+            "description_en": m.description_en,
+            "description_ar": m.description_ar,
+            "calories": m.calories,
+            "protein_g": m.protein_g,
+            "carbs_g": m.carbs_g,
+            "fat_g": m.fat_g,
+            "fiber_g": m.fiber_g,
+            "sugar_g": m.sugar_g,
+            "sodium_mg": m.sodium_mg,
+            "price": m.price,
+            "image_url": m.image_url,
+            "ingredients": m.ingredients,
+            "allergens": m.allergens,
+            "diet_tags": m.diet_tags,
+            "is_available": m.is_available,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        })
+
     return {
-        "data": meals,
+        "data": data,
         "meta": {
             "total": total,
             "page": page,
@@ -98,14 +140,43 @@ def list_meals(
     }
 
 
-@router.get("/{meal_id}", response_model=MealResponse)
+@router.get("/{meal_id}")
 def get_meal(meal_id: int, db: Session = Depends(get_db)):
     meal = db.query(Meal).filter(Meal.id == meal_id).first()
 
     if not meal:
         raise HTTPException(status_code=404, detail="Meal not found")
 
-    return meal
+    cat = db.query(MealCategory).filter(MealCategory.id == meal.category_id).first()
+
+    return {
+        "id": meal.id,
+        "category_id": meal.category_id,
+        "category_name": cat.name_en if cat else None,
+        "category": {
+            "id": cat.id,
+            "name_en": cat.name_en,
+            "name_ar": cat.name_ar,
+        } if cat else None,
+        "name_en": meal.name_en,
+        "name_ar": meal.name_ar,
+        "description_en": meal.description_en,
+        "description_ar": meal.description_ar,
+        "calories": meal.calories,
+        "protein_g": meal.protein_g,
+        "carbs_g": meal.carbs_g,
+        "fat_g": meal.fat_g,
+        "fiber_g": meal.fiber_g,
+        "sugar_g": meal.sugar_g,
+        "sodium_mg": meal.sodium_mg,
+        "price": meal.price,
+        "image_url": meal.image_url,
+        "ingredients": meal.ingredients,
+        "allergens": meal.allergens,
+        "diet_tags": meal.diet_tags,
+        "is_available": meal.is_available,
+        "created_at": meal.created_at.isoformat() if meal.created_at else None,
+    }
 
 
 @router.put("/{meal_id}", response_model=MealResponse)
