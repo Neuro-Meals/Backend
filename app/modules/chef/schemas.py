@@ -1,5 +1,5 @@
 from datetime import datetime
-
+from datetime import date
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.deliveries.models import DeliveryStatus
@@ -89,6 +89,40 @@ class ChefDriverResponse(BaseModel):
 class ChefStatusResponse(BaseModel):
     message: str
     order: ChefOrderResponse
+    
+class ChefMealSummaryItem(BaseModel):
+    meal_id: int | None = None
+    meal_name: str
+    quantity: int
+
+
+class ChefMealSummaryResponse(BaseModel):
+    date: date
+    total_orders: int
+    total_meals: int
+    meals: list[ChefMealSummaryItem]
+
+
+class ChefAllergySummaryItem(BaseModel):
+    allergy: str
+    customer_count: int
+    order_count: int
+
+
+class ChefAllergyCustomerResponse(BaseModel):
+    user_id: int
+    full_name: str
+    phone: str | None = None
+    allergies: list[str]
+    order_ids: list[int]
+
+
+class ChefAllergySummaryResponse(BaseModel):
+    date: date
+    total_orders: int
+    customers_with_allergies: int
+    allergies: list[ChefAllergySummaryItem]
+    customers: list[ChefAllergyCustomerResponse]    
 
 
 class ChefDeliveryAssignmentResponse(BaseModel):

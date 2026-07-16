@@ -8,15 +8,19 @@ from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.chef.schemas import (
     AssignChefDriverRequest,
+    ChefAllergySummaryResponse,
     ChefDashboardResponse,
     ChefDeliveryAssignmentResponse,
     ChefDriverResponse,
+    ChefMealSummaryResponse,
     ChefOrderResponse,
     ChefStatusResponse,
 )
 from app.modules.deliveries.models import Delivery, DeliveryStatus
 from app.modules.orders.models import Order, OrderStatus
 from app.modules.users.models import User, UserRole
+from collections import defaultdict
+from typing import Any
 
 
 router = APIRouter(
@@ -30,6 +34,168 @@ def enum_value(value):
         return None
 
     return value.value if hasattr(value, "value") else value
+
+KITCHEN_ORDER_STATUSES = [
+    OrderStatus.PENDING,
+    OrderStatus.CONFIRMED,
+    OrderStatus.PREPARING,
+    OrderStatus.READY_FOR_DELIVERY,
+]
+
+
+def get_date_range(target_date: date) -> tuple[datetime, datetime]:
+    start_datetime = datetime.combine(
+        target_date,
+        time.min,
+    )
+
+    end_datetime = start_datetime + timedelta(days=1)
+
+    return start_datetime, end_datetime
+
+
+def get_orders_for_delivery_date(
+    db: Session,
+    target_date: date,
+    include_completed: bool = False,
+) -> list[Order]:
+    start_datetime, end_datetime = get_date_range(
+        target_date
+    )
+
+    query = db.query(Order).filter(
+        Order.delivery_date >= start_datetime,
+        Order.delivery_date < end_datetime,
+    )
+
+    if not include_completed:
+        query = query.filter(
+            Order.status.in_(KITCHEN_ORDER_STATUSES)
+        )
+
+    return (
+        query.order_by(
+            Order.delivery_date.asc(),
+            Order.id.asc(),
+        )
+        .all()
+    )
+
+
+def normalize_order_items(
+    items: Any,
+) -> list[dict]:
+    """
+    Convert Order.items into a predictable list of dictionaries.
+
+    Supported examples:
+
+    [
+        {
+            "meal_id": 1,
+            "meal_name": "Chicken Bowl",
+            "quantity": 2
+        }
+    ]
+
+    or:
+
+    {
+        "items": [...]
+    }
+    """
+
+    if items is None:
+        return []
+
+    if isinstance(items, dict):
+        nested_items = items.get("items")
+
+        if isinstance(nested_items, list):
+            return [
+                item
+                for item in nested_items
+                if isinstance(item, dict)
+            ]
+
+        return [items]
+
+    if isinstance(items, list):
+        return [
+            item
+            for item in items
+            if isinstance(item, dict)
+        ]
+
+    return []
+
+
+def extract_meal_id(item: dict) -> int | None:
+    raw_value = (
+        item.get("meal_id")
+        or item.get("id")
+    )
+
+    if raw_value is None:
+        return None
+
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def extract_meal_name(item: dict) -> str:
+    return str(
+        item.get("meal_name")
+        or item.get("name_en")
+        or item.get("name")
+        or item.get("title")
+        or item.get("plan_name")
+        or "Unknown meal"
+    ).strip()
+
+
+def extract_item_quantity(item: dict) -> int:
+    raw_value = (
+        item.get("quantity")
+        or item.get("qty")
+        or item.get("count")
+        or 1
+    )
+
+    try:
+        quantity = int(raw_value)
+    except (TypeError, ValueError):
+        quantity = 1
+
+    return max(quantity, 1)
+
+
+def normalize_allergies(
+    allergies: Any,
+) -> list[str]:
+    if allergies is None:
+        return []
+
+    if isinstance(allergies, list):
+        values = allergies
+
+    elif isinstance(allergies, str):
+        values = allergies.split(",")
+
+    else:
+        return []
+
+    normalized = []
+
+    for allergy in values:
+        clean_allergy = str(allergy).strip().lower()
+
+        if clean_allergy and clean_allergy not in normalized:
+            normalized.append(clean_allergy)
+
+    return normalized
 
 
 def build_customer_payload(
@@ -357,7 +523,321 @@ def chef_orders(
             ),
         },
     }
+    
+    
+@router.get(
+    "/orders/today",
+)
+def chef_today_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.CHEF,
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+        )
+    ),
+    include_completed: bool = Query(False),
+):
+    target_date = date.today()
 
+    orders = get_orders_for_delivery_date(
+        db=db,
+        target_date=target_date,
+        include_completed=include_completed,
+    )
+
+    return {
+        "date": target_date,
+        "total": len(orders),
+        "data": [
+            build_order_payload(db, order)
+            for order in orders
+        ],
+    }    
+
+@router.get(
+    "/orders/tomorrow",
+)
+def chef_tomorrow_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.CHEF,
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+        )
+    ),
+    include_completed: bool = Query(False),
+):
+    target_date = date.today() + timedelta(days=1)
+
+    orders = get_orders_for_delivery_date(
+        db=db,
+        target_date=target_date,
+        include_completed=include_completed,
+    )
+
+    return {
+        "date": target_date,
+        "total": len(orders),
+        "data": [
+            build_order_payload(db, order)
+            for order in orders
+        ],
+    }
+    
+@router.get(
+    "/meals/summary",
+    response_model=ChefMealSummaryResponse,
+)
+def chef_meal_summary(
+    target_date: date = Query(
+        default_factory=date.today,
+        alias="date",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.CHEF,
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+        )
+    ),
+):
+    orders = get_orders_for_delivery_date(
+        db=db,
+        target_date=target_date,
+        include_completed=False,
+    )
+
+    meal_summary: dict[str, dict] = {}
+
+    for order in orders:
+        order_items = normalize_order_items(
+            order.items
+        )
+
+        for item in order_items:
+            meal_id = extract_meal_id(item)
+            meal_name = extract_meal_name(item)
+            quantity = extract_item_quantity(item)
+
+            summary_key = (
+                f"id:{meal_id}"
+                if meal_id is not None
+                else f"name:{meal_name.lower()}"
+            )
+
+            if summary_key not in meal_summary:
+                meal_summary[summary_key] = {
+                    "meal_id": meal_id,
+                    "meal_name": meal_name,
+                    "quantity": 0,
+                }
+
+            meal_summary[summary_key]["quantity"] += quantity
+
+    meals = sorted(
+        meal_summary.values(),
+        key=lambda item: (
+            -item["quantity"],
+            item["meal_name"].lower(),
+        ),
+    )
+
+    total_meals = sum(
+        item["quantity"]
+        for item in meals
+    )
+
+    return {
+        "date": target_date,
+        "total_orders": len(orders),
+        "total_meals": total_meals,
+        "meals": meals,
+    }
+    
+  
+@router.get(
+    "/allergies/summary",
+    response_model=ChefAllergySummaryResponse,
+)
+def chef_allergy_summary(
+    target_date: date = Query(
+        default_factory=date.today,
+        alias="date",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.CHEF,
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+        )
+    ),
+):
+    orders = get_orders_for_delivery_date(
+        db=db,
+        target_date=target_date,
+        include_completed=False,
+    )
+
+    user_order_ids: dict[int, list[int]] = defaultdict(list)
+
+    for order in orders:
+        user_order_ids[order.user_id].append(
+            order.id
+        )
+
+    user_ids = list(user_order_ids.keys())
+
+    customers = []
+
+    if user_ids:
+        customers = (
+            db.query(User)
+            .filter(User.id.in_(user_ids))
+            .all()
+        )
+
+    allergy_customer_ids: dict[str, set[int]] = defaultdict(set)
+    allergy_order_ids: dict[str, set[int]] = defaultdict(set)
+
+    customer_results = []
+
+    for customer in customers:
+        allergies = normalize_allergies(
+            customer.allergies
+        )
+
+        if not allergies:
+            continue
+
+        order_ids = user_order_ids.get(
+            customer.id,
+            [],
+        )
+
+        for allergy in allergies:
+            allergy_customer_ids[allergy].add(
+                customer.id
+            )
+
+            allergy_order_ids[allergy].update(
+                order_ids
+            )
+
+        customer_results.append(
+            {
+                "user_id": customer.id,
+                "full_name": (
+                    f"{customer.first_name} "
+                    f"{customer.last_name}"
+                ).strip(),
+                "phone": customer.phone,
+                "allergies": allergies,
+                "order_ids": order_ids,
+            }
+        )
+
+    allergy_results = []
+
+    for allergy in sorted(
+        allergy_customer_ids.keys()
+    ):
+        allergy_results.append(
+            {
+                "allergy": allergy,
+                "customer_count": len(
+                    allergy_customer_ids[allergy]
+                ),
+                "order_count": len(
+                    allergy_order_ids[allergy]
+                ),
+            }
+        )
+
+    customer_results.sort(
+        key=lambda customer: customer["full_name"].lower()
+    )
+
+    return {
+        "date": target_date,
+        "total_orders": len(orders),
+        "customers_with_allergies": len(
+            customer_results
+        ),
+        "allergies": allergy_results,
+        "customers": customer_results,
+    }        
+
+@router.get(
+    "/orders/ready-for-delivery",
+)
+def chef_ready_for_delivery_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.CHEF,
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+            UserRole.DELIVERY_MANAGER,
+        )
+    ),
+    unassigned_only: bool = Query(False),
+    target_date: date | None = Query(
+        None,
+        alias="date",
+    ),
+):
+    query = (
+        db.query(Order)
+        .outerjoin(
+            Delivery,
+            Delivery.order_id == Order.id,
+        )
+        .filter(
+            Order.status
+            == OrderStatus.READY_FOR_DELIVERY
+        )
+    )
+
+    if unassigned_only:
+        query = query.filter(
+            or_(
+                Delivery.id.is_(None),
+                Delivery.driver_id.is_(None),
+            )
+        )
+
+    if target_date is not None:
+        start_datetime, end_datetime = get_date_range(
+            target_date
+        )
+
+        query = query.filter(
+            Order.delivery_date >= start_datetime,
+            Order.delivery_date < end_datetime,
+        )
+
+    orders = (
+        query.order_by(
+            Order.delivery_date.asc().nullslast(),
+            Order.id.asc(),
+        )
+        .all()
+    )
+
+    return {
+        "date": target_date,
+        "unassigned_only": unassigned_only,
+        "total": len(orders),
+        "data": [
+            build_order_payload(db, order)
+            for order in orders
+        ],
+    }
 
 @router.get(
     "/orders/{order_id}",

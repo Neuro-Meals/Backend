@@ -131,6 +131,17 @@ PERMISSIONS = [
     ("chef.orders.ready", "Mark order ready for delivery"),
     ("chef.drivers.view", "View available drivers"),
     ("chef.deliveries.assign", "Assign driver to ready order"),
+    
+    
+    # Chef detailed operations
+    ("chef.orders.today", "View today's kitchen orders"),
+    ("chef.orders.tomorrow", "View tomorrow's kitchen orders"),
+    ("chef.meals.summary", "View meal preparation summary"),
+    ("chef.allergies.summary", "View customer allergy summary"),
+    (
+    "chef.orders.ready_for_delivery",
+    "View orders ready for delivery",
+    ),
 ]
 
 
