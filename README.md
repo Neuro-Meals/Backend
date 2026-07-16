@@ -259,3 +259,7 @@ JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
 WHERE pg_type.typname = 'userrole';
 "
 
+
+alembic revision \
+  --autogenerate \
+  -m "add plan weekly menu items"
