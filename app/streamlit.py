@@ -64,6 +64,132 @@ def api_request(method, path, *, json=None, params=None, timeout=30):
     return response
 
 
+def render_subscription_dashboard(data):
+    """Render GET /subscriptions/my/current-details in a frontend-like view."""
+    if not isinstance(data, dict):
+        st.warning("Unexpected response format.")
+        st.json(data)
+        return
+
+    subscription = data.get("subscription") or {}
+    plan = data.get("plan") or {}
+    today = data.get("today") or {}
+    tomorrow = data.get("tomorrow") or {}
+    weekly_menu = data.get("weekly_menu") or []
+
+    st.subheader("Current Subscription")
+    metrics = st.columns(4)
+    metrics[0].metric("Status", subscription.get("status", "N/A"))
+    metrics[1].metric("Payment", subscription.get("payment_status", "N/A"))
+    metrics[2].metric("Amount", subscription.get("amount", 0))
+    metrics[3].metric("Plan", plan.get("name_en", "N/A"))
+
+    left, right = st.columns(2)
+    with left:
+        st.write("### Subscription Details")
+        st.write(f"**Subscription ID:** {subscription.get('id', 'N/A')}")
+        st.write(f"**Start Date:** {subscription.get('start_date') or 'Not started'}")
+        st.write(f"**End Date:** {subscription.get('end_date') or 'Not set'}")
+        st.write(f"**Paused At:** {subscription.get('paused_at') or 'Not paused'}")
+        st.write(f"**Cancelled At:** {subscription.get('cancelled_at') or 'Not cancelled'}")
+        st.write(f"**Notes:** {subscription.get('notes') or 'None'}")
+
+    with right:
+        st.write("### Plan Details")
+        st.write(f"**Plan ID:** {plan.get('id', 'N/A')}")
+        st.write(f"**English Name:** {plan.get('name_en') or 'N/A'}")
+        st.write(f"**Arabic Name:** {plan.get('name_ar') or 'N/A'}")
+        st.write(f"**Type:** {plan.get('plan_type') or 'N/A'}")
+        st.write(f"**Goal:** {plan.get('goal') or 'N/A'}")
+        st.write(f"**Duration:** {plan.get('duration_days', 0)} days")
+        st.write(f"**Meals Per Day:** {plan.get('meals_per_day', 0)}")
+        st.write(f"**Total Meals:** {plan.get('total_meals', 0)}")
+
+    def render_day(title, day_payload):
+        st.write(f"### {title}")
+        st.caption(
+            f"{day_payload.get('date', 'Unknown date')} · "
+            f"{day_payload.get('day_of_week', 'Unknown day').title()}"
+        )
+        categories = day_payload.get("categories") or []
+        if not categories:
+            st.info(f"No menu configured for {title.lower()}.")
+            return
+
+        for category_entry in categories:
+            category = category_entry.get("category") or {}
+            category_name = category.get("name_en") or "Meal Category"
+            category_ar = category.get("name_ar")
+            heading = category_name
+            if category_ar:
+                heading += f" / {category_ar}"
+            st.write(f"#### {heading}")
+
+            for meal in category_entry.get("meals") or []:
+                meal_name = meal.get("name_en") or "Unnamed meal"
+                meal_ar = meal.get("name_ar")
+                with st.expander(
+                    f"{meal_name}" + (f" / {meal_ar}" if meal_ar else ""),
+                    expanded=True,
+                ):
+                    cols = st.columns(4)
+                    cols[0].metric("Quantity", meal.get("quantity", 1))
+                    cols[1].metric("Calories", meal.get("calories") or 0)
+                    cols[2].metric("Protein (g)", meal.get("protein_g") or 0)
+                    cols[3].metric("Carbs (g)", meal.get("carbs_g") or 0)
+                    st.write(f"**Fat:** {meal.get('fat_g') or 0} g")
+                    st.write("**Ingredients:**", ", ".join(meal.get("ingredients") or []) or "None")
+                    st.write("**Allergens:**", ", ".join(meal.get("allergens") or []) or "None")
+                    if meal.get("image_url"):
+                        st.write(f"**Image URL:** {meal.get('image_url')}")
+
+    st.divider()
+    today_col, tomorrow_col = st.columns(2)
+    with today_col:
+        render_day("Today's Menu", today)
+    with tomorrow_col:
+        render_day("Tomorrow's Menu", tomorrow)
+
+    st.divider()
+    st.subheader("Monday to Sunday Weekly Menu")
+    if not weekly_menu:
+        st.info("No weekly menu was returned.")
+    else:
+        for day in weekly_menu:
+            day_name = str(day.get("day_of_week", "day")).title()
+            with st.expander(day_name, expanded=False):
+                categories = day.get("categories") or []
+                if not categories:
+                    st.info("No meals configured for this day.")
+                    continue
+                for category_entry in categories:
+                    category = category_entry.get("category") or {}
+                    st.write(
+                        f"#### {category.get('name_en', 'Category')}"
+                        + (f" / {category.get('name_ar')}" if category.get('name_ar') else "")
+                    )
+                    rows = []
+                    for meal in category_entry.get("meals") or []:
+                        rows.append(
+                            {
+                                "meal_id": meal.get("id"),
+                                "meal": meal.get("name_en"),
+                                "meal_ar": meal.get("name_ar"),
+                                "quantity": meal.get("quantity"),
+                                "calories": meal.get("calories"),
+                                "protein_g": meal.get("protein_g"),
+                                "carbs_g": meal.get("carbs_g"),
+                                "fat_g": meal.get("fat_g"),
+                                "allergens": ", ".join(meal.get("allergens") or []),
+                            }
+                        )
+                    if rows:
+                        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    with st.expander("Raw API Response"):
+        st.json(data)
+
+
 menu = st.sidebar.selectbox(
     "Choose Module",
     [
@@ -692,8 +818,15 @@ elif menu == "Plans":
 # ================= SUBSCRIPTIONS =================
 
 elif menu == "Subscriptions":
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["Create", "My Subscriptions", "List Admin", "Update Admin", "Cancel"]
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+        [
+            "Create",
+            "My Subscriptions",
+            "Current Subscription Details",
+            "List Admin",
+            "Update Admin",
+            "Cancel",
+        ]
     )
 
     with tab1:
@@ -714,6 +847,41 @@ elif menu == "Subscriptions":
             show_response(res)
 
     with tab3:
+        st.subheader("Customer Subscription Dashboard")
+        st.caption(
+            "Tests GET /subscriptions/my/current-details and displays the current "
+            "subscription, plan details, today, tomorrow, and Monday-to-Sunday menu."
+        )
+
+        if not st.session_state.token:
+            st.warning("Login as a customer with an active subscription first.")
+
+        if st.button(
+            "Get Current Subscription Details",
+            key="subscription_current_details_btn",
+            use_container_width=True,
+        ):
+            try:
+                res = requests.get(
+                    f"{API_BASE}/subscriptions/my/current-details",
+                    headers=headers(),
+                    timeout=30,
+                )
+            except requests.RequestException as exc:
+                st.error(f"Request failed: {exc}")
+            else:
+                st.write(f"**HTTP {res.status_code}**")
+                try:
+                    payload = res.json()
+                except ValueError:
+                    st.write(res.text)
+                else:
+                    if res.status_code == 200:
+                        render_subscription_dashboard(payload)
+                    else:
+                        st.json(payload)
+
+    with tab4:
         status_filter = st.selectbox(
             "Status",
             ["", "pending_payment", "active", "paused", "cancelled", "expired"],
@@ -738,7 +906,7 @@ elif menu == "Subscriptions":
             )
             show_response(res)
 
-    with tab4:
+    with tab5:
         subscription_id = st.number_input("Subscription ID", min_value=1)
         status = st.selectbox(
             "New Subscription Status",
@@ -762,7 +930,7 @@ elif menu == "Subscriptions":
             )
             show_response(res)
 
-    with tab5:
+    with tab6:
         subscription_id = st.number_input("Cancel Subscription ID", min_value=1)
 
         if st.button("Cancel Subscription"):
