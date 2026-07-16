@@ -28,6 +28,19 @@ if "tap_checkout_url" not in st.session_state:
 if "chatbot_messages" not in st.session_state:
     st.session_state.chatbot_messages = []
 
+# Guided end-to-end flow state
+for state_key, default_value in {
+    "flow_email": "",
+    "flow_password": "",
+    "flow_subscription_id": 1,
+    "flow_payment_id": None,
+    "flow_tap_charge_id": "",
+    "flow_checkout_url": "",
+    "flow_order_id": 1,
+}.items():
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default_value
+
 
 def headers():
     if st.session_state.token:
@@ -209,6 +222,7 @@ menu = st.sidebar.selectbox(
         "Payments",
         "Reports",
         "Chatbot",
+        "End-to-End Flow",
         "Custom Endpoint",
     ],
 )
@@ -1014,6 +1028,7 @@ elif menu == "Orders":
             "Status",
             [
                 "",
+                "scheduled",
                 "pending",
                 "confirmed",
                 "preparing",
@@ -1083,6 +1098,7 @@ elif menu == "Orders":
         new_status = st.selectbox(
             "New Status",
             [
+                "scheduled",
                 "pending",
                 "confirmed",
                 "preparing",
@@ -1593,6 +1609,7 @@ elif menu == "Chef":
             ready_tab,
             drivers_tab,
             assign_tab,
+            bulk_assign_tab,
         ) = st.tabs(
             [
                 "Dashboard",
@@ -1602,6 +1619,7 @@ elif menu == "Chef":
                 "Mark Ready",
                 "Drivers",
                 "Assign Driver",
+                "Bulk Assign Driver",
             ]
         )
 
@@ -1904,6 +1922,77 @@ elif menu == "Chef":
                         "scheduled_at": scheduled_at.strip() or None,
                     },
                 )
+
+        with bulk_assign_tab:
+            st.subheader("Bulk Assign Ready Orders")
+            st.caption(
+                "Select one active driver and assign several ready-for-delivery "
+                "orders in one request. Invalid orders are returned as failures."
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                bulk_driver_id = st.number_input(
+                    "Driver ID",
+                    min_value=1,
+                    value=1,
+                    key="chef_bulk_driver_id",
+                )
+                bulk_order_ids_text = st.text_area(
+                    "Ready Order IDs",
+                    value="1,2,3",
+                    help="Comma-separated IDs, for example: 10,11,12",
+                    key="chef_bulk_order_ids",
+                )
+
+            with col2:
+                bulk_scheduled_at = st.text_input(
+                    "Scheduled At (ISO datetime, optional)",
+                    placeholder="2026-07-16T13:00:00",
+                    key="chef_bulk_scheduled_at",
+                )
+
+                if st.button(
+                    "Load Unassigned Ready Orders",
+                    key="chef_bulk_load_ready_btn",
+                    use_container_width=True,
+                ):
+                    api_request(
+                        "GET",
+                        "/chef/orders/ready-for-delivery",
+                        params={"unassigned_only": True},
+                    )
+
+            if st.button(
+                "POST /chef/orders/bulk-assign-driver",
+                key="chef_bulk_assign_btn",
+                use_container_width=True,
+            ):
+                try:
+                    bulk_order_ids = list(
+                        dict.fromkeys(
+                            int(value.strip())
+                            for value in bulk_order_ids_text.split(",")
+                            if value.strip()
+                        )
+                    )
+                except ValueError:
+                    st.error("Every order ID must be a whole number.")
+                else:
+                    if not bulk_order_ids:
+                        st.error("Enter at least one order ID.")
+                    else:
+                        api_request(
+                            "POST",
+                            "/chef/orders/bulk-assign-driver",
+                            json={
+                                "driver_id": int(bulk_driver_id),
+                                "order_ids": bulk_order_ids,
+                                "scheduled_at": (
+                                    bulk_scheduled_at.strip() or None
+                                ),
+                            },
+                        )
 
     # ------------------------------------------------------------
     # ADMIN / SUPER ADMIN CHEF MANAGEMENT
@@ -2493,6 +2582,422 @@ elif menu == "Chatbot":
                 timeout=90,
             )
 
+
+
+# ================= END-TO-END CUSTOMER FLOW =================
+
+elif menu == "End-to-End Flow":
+    st.header("Customer Subscription to Automatic Order Flow")
+    st.caption(
+        "Guided testing from registration to the customer's automatically "
+        "generated order. Some steps require switching between customer and "
+        "admin accounts."
+    )
+
+    (
+        register_tab,
+        verify_tab,
+        login_tab,
+        plans_tab,
+        subscribe_tab,
+        payment_tab,
+        dashboard_tab,
+        automation_tab,
+        orders_tab,
+    ) = st.tabs(
+        [
+            "1 Register",
+            "2 Verify",
+            "3 Login",
+            "4 Plans & Menu",
+            "5 Subscribe",
+            "6 Pay",
+            "7 Customer Dashboard",
+            "8 Generate Orders",
+            "9 My Orders",
+        ]
+    )
+
+    with register_tab:
+        st.info("Public endpoint. Register a new customer.")
+        first_name = st.text_input(
+            "First Name", "Flow", key="flow_register_first"
+        )
+        last_name = st.text_input(
+            "Last Name", "Customer", key="flow_register_last"
+        )
+        email = st.text_input(
+            "Email",
+            st.session_state.flow_email or "flow.customer@example.com",
+            key="flow_register_email",
+        )
+        phone = st.text_input(
+            "Phone", "+966550009999", key="flow_register_phone"
+        )
+        password = st.text_input(
+            "Password",
+            st.session_state.flow_password or "Test@12345",
+            type="password",
+            key="flow_register_password",
+        )
+        location = st.text_input(
+            "Location", "Riyadh", key="flow_register_location"
+        )
+        address = st.text_input(
+            "Delivery Address",
+            "King Fahd Road, Riyadh",
+            key="flow_register_address",
+        )
+
+        if st.button(
+            "POST /auth/register",
+            key="flow_register_btn",
+            use_container_width=True,
+        ):
+            response = api_request(
+                "POST",
+                "/auth/register",
+                json={
+                    "first_name": first_name.strip(),
+                    "last_name": last_name.strip(),
+                    "email": email.strip(),
+                    "phone": phone.strip(),
+                    "password": password,
+                    "location": location.strip(),
+                    "address": address.strip(),
+                },
+            )
+            if response is not None and response.status_code in (200, 201):
+                st.session_state.flow_email = email.strip()
+                st.session_state.flow_password = password
+                st.success("Registered. Continue to Verify.")
+
+    with verify_tab:
+        verification_email = st.text_input(
+            "Email",
+            st.session_state.flow_email,
+            key="flow_verify_email",
+        )
+        otp = st.text_input("OTP", key="flow_verify_otp")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(
+                "POST /auth/verify-email",
+                key="flow_verify_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "POST",
+                    "/auth/verify-email",
+                    json={
+                        "email": verification_email.strip(),
+                        "otp": otp.strip(),
+                    },
+                )
+        with col2:
+            if st.button(
+                "Resend OTP",
+                key="flow_resend_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "POST",
+                    "/auth/resend-verification-otp",
+                    json={"email": verification_email.strip()},
+                )
+
+    with login_tab:
+        login_email = st.text_input(
+            "Email",
+            st.session_state.flow_email,
+            key="flow_login_email",
+        )
+        login_password = st.text_input(
+            "Password",
+            st.session_state.flow_password,
+            type="password",
+            key="flow_login_password",
+        )
+
+        if st.button(
+            "POST /auth/login",
+            key="flow_login_btn",
+            use_container_width=True,
+        ):
+            response = api_request(
+                "POST",
+                "/auth/login",
+                json={
+                    "email": login_email.strip(),
+                    "password": login_password,
+                },
+            )
+            if response is not None and response.status_code == 200:
+                payload = response.json()
+                st.session_state.token = payload.get("access_token")
+                st.session_state.user = payload.get("user")
+                st.session_state.flow_email = login_email.strip()
+                st.session_state.flow_password = login_password
+                st.success("Customer token stored in this Streamlit session.")
+
+        if st.button(
+            "GET /auth/me",
+            key="flow_auth_me_btn",
+            use_container_width=True,
+        ):
+            api_request("GET", "/auth/me")
+
+    with plans_tab:
+        st.write("### Available Plans")
+        if st.button(
+            "GET /plans/",
+            key="flow_list_plans_btn",
+            use_container_width=True,
+        ):
+            api_request("GET", "/plans/", params={"is_active": "true"})
+
+        plan_id = st.number_input(
+            "Plan ID",
+            min_value=1,
+            value=1,
+            key="flow_plan_id",
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(
+                "GET /plans/{plan_id}",
+                key="flow_get_plan_btn",
+                use_container_width=True,
+            ):
+                api_request("GET", f"/plans/{int(plan_id)}")
+        with col2:
+            if st.button(
+                "GET weekly plan menu",
+                key="flow_weekly_menu_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "GET",
+                    f"/plan-menus/plan/{int(plan_id)}/weekly",
+                )
+
+    with subscribe_tab:
+        plan_id = st.number_input(
+            "Plan ID",
+            min_value=1,
+            value=1,
+            key="flow_subscribe_plan_id",
+        )
+        notes = st.text_area(
+            "Subscription Notes",
+            "End-to-end Streamlit flow",
+            key="flow_subscribe_notes",
+        )
+
+        if st.button(
+            "POST /subscriptions/",
+            key="flow_subscribe_btn",
+            use_container_width=True,
+        ):
+            response = api_request(
+                "POST",
+                "/subscriptions/",
+                json={
+                    "plan_id": int(plan_id),
+                    "notes": notes or None,
+                },
+            )
+            if response is not None and response.status_code in (200, 201):
+                subscription = response.json()
+                st.session_state.flow_subscription_id = subscription.get(
+                    "id", 1
+                )
+                st.session_state.tap_subscription_id = (
+                    st.session_state.flow_subscription_id
+                )
+                st.success(
+                    f"Stored subscription ID "
+                    f"{st.session_state.flow_subscription_id}."
+                )
+
+        if st.button(
+            "GET /subscriptions/my",
+            key="flow_my_subscriptions_btn",
+            use_container_width=True,
+        ):
+            api_request("GET", "/subscriptions/my")
+
+    with payment_tab:
+        subscription_id = st.number_input(
+            "Subscription ID",
+            min_value=1,
+            value=int(st.session_state.flow_subscription_id or 1),
+            key="flow_payment_subscription_id",
+        )
+
+        if st.button(
+            "POST /payments/create-checkout",
+            key="flow_checkout_btn",
+            use_container_width=True,
+        ):
+            response = api_request(
+                "POST",
+                "/payments/create-checkout",
+                json={"subscription_id": int(subscription_id)},
+                timeout=45,
+            )
+            if response is not None and response.status_code == 200:
+                payload = response.json()
+                st.session_state.flow_payment_id = payload.get("payment_id")
+                st.session_state.flow_tap_charge_id = payload.get(
+                    "tap_charge_id", ""
+                )
+                st.session_state.flow_checkout_url = payload.get(
+                    "checkout_url", ""
+                )
+
+        if st.session_state.flow_checkout_url:
+            st.link_button(
+                "Open Tap Checkout",
+                st.session_state.flow_checkout_url,
+                use_container_width=True,
+            )
+
+        tap_charge_id = st.text_input(
+            "Tap Charge ID",
+            st.session_state.flow_tap_charge_id,
+            key="flow_tap_charge_id_input",
+        )
+        if st.button(
+            "GET /payments/verify-charge/{tap_id}",
+            key="flow_verify_payment_btn",
+            use_container_width=True,
+        ):
+            api_request(
+                "GET",
+                f"/payments/verify-charge/{tap_charge_id.strip()}",
+                timeout=45,
+            )
+
+    with dashboard_tab:
+        st.write(
+            "After payment is paid and the subscription is active, this "
+            "returns the plan, today, tomorrow and Monday-to-Sunday menu."
+        )
+        if st.button(
+            "GET /subscriptions/my/current-details",
+            key="flow_current_details_btn",
+            use_container_width=True,
+        ):
+            response = api_request(
+                "GET", "/subscriptions/my/current-details"
+            )
+            if response is not None and response.status_code == 200:
+                render_subscription_dashboard(response.json())
+
+    with automation_tab:
+        st.warning(
+            "These endpoints require Admin or Super Admin. Login with an "
+            "admin account in the Auth section, then return here."
+        )
+        target_date = st.date_input(
+            "Order Date",
+            key="flow_automation_date",
+        )
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button(
+                "Preview",
+                key="flow_preview_orders_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "GET",
+                    "/orders/automation/preview",
+                    params={"date": target_date.isoformat()},
+                )
+        with col2:
+            if st.button(
+                "Generate",
+                key="flow_generate_orders_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "POST",
+                    "/orders/automation/generate",
+                    params={"date": target_date.isoformat()},
+                )
+        with col3:
+            if st.button(
+                "Confirm Today",
+                key="flow_confirm_today_btn",
+                use_container_width=True,
+            ):
+                api_request(
+                    "POST",
+                    "/orders/automation/confirm-today",
+                )
+
+    with orders_tab:
+        st.info(
+            "Login again as the customer after the admin generates the order."
+        )
+
+        if st.button(
+            "GET /orders/my",
+            key="flow_my_orders_btn",
+            use_container_width=True,
+        ):
+            response = api_request("GET", "/orders/my")
+            if response is not None and response.status_code == 200:
+                payload = response.json()
+                orders = (
+                    payload
+                    if isinstance(payload, list)
+                    else payload.get("data", [])
+                    if isinstance(payload, dict)
+                    else []
+                )
+
+                if orders:
+                    rows = []
+                    for order in orders:
+                        rows.append(
+                            {
+                                "id": order.get("id"),
+                                "order_number": order.get("order_number"),
+                                "status": order.get("status"),
+                                "delivery_date": order.get("delivery_date"),
+                                "address": order.get("delivery_address"),
+                                "items": len(order.get("items") or []),
+                            }
+                        )
+                    st.dataframe(
+                        rows,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    first_order_id = orders[0].get("id")
+                    if first_order_id:
+                        st.session_state.flow_order_id = first_order_id
+                else:
+                    st.info("No automatic orders found for this customer.")
+
+        order_id = st.number_input(
+            "Order ID",
+            min_value=1,
+            value=int(st.session_state.flow_order_id or 1),
+            key="flow_get_order_id",
+        )
+        if st.button(
+            "GET /orders/{order_id}",
+            key="flow_get_order_btn",
+            use_container_width=True,
+        ):
+            api_request("GET", f"/orders/{int(order_id)}")
 
 
 # ================= CUSTOM ENDPOINT =================
