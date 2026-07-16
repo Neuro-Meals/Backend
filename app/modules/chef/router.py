@@ -626,6 +626,151 @@ def chef_today_orders(
         ],
     }    
 
+
+@router.get(
+    "/orders/today/grouped",
+)
+def chef_today_orders_grouped(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.CHEF,
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+        )
+    ),
+    include_completed: bool = Query(False),
+):
+    """
+    Return today's orders grouped by meal time:
+    breakfast, lunch, dinner, and other.
+
+    Each group contains the category id, name, and
+    the list of orders that belong to it.
+    """
+    from app.modules.meals.models import MealCategory
+
+    target_date = date.today()
+
+    orders = get_orders_for_delivery_date(
+        db=db,
+        target_date=target_date,
+        include_completed=include_completed,
+    )
+
+    # Fetch all meal categories to build a lookup
+    categories = (
+        db.query(MealCategory)
+        .order_by(MealCategory.name_en.asc())
+        .all()
+    )
+
+    category_lookup = {
+        cat.id: cat for cat in categories
+    }
+
+    # Define meal-time buckets in display order
+    meal_time_order = [
+        "breakfast",
+        "lunch",
+        "dinner",
+        "snacks",
+        "other",
+    ]
+
+    def get_meal_time(cat_name: str) -> str:
+        name = (cat_name or "").lower().strip()
+        if "breakfast" in name:
+            return "breakfast"
+        if "lunch" in name:
+            return "lunch"
+        if "dinner" in name or "supper" in name:
+            return "dinner"
+        if "snack" in name:
+            return "snacks"
+        return "other"
+
+    # Build grouped structure
+    grouped: dict[str, dict] = {}
+    for bucket in meal_time_order:
+        grouped[bucket] = {
+            "meal_time": bucket,
+            "label": bucket.capitalize(),
+            "categories": {},
+            "order_count": 0,
+        }
+
+    for order in orders:
+        payload = build_order_payload(db, order)
+        items = normalize_order_items(order.items)
+
+        # Determine the primary category from the first item
+        primary_cat_id = None
+        primary_cat_name = None
+        for item in items:
+            cat_id = item.get("category_id")
+            cat_name = item.get("category_name")
+            if cat_id:
+                primary_cat_id = cat_id
+                primary_cat_name = cat_name
+                break
+
+        # If no category in items, try to look up from category_lookup
+        if primary_cat_id and primary_cat_id in category_lookup:
+            cat = category_lookup[primary_cat_id]
+            primary_cat_name = cat.name_en
+        elif primary_cat_id is None and items:
+            # No category info at all
+            primary_cat_id = 0
+            primary_cat_name = "Uncategorized"
+
+        if primary_cat_id is None:
+            primary_cat_id = 0
+            primary_cat_name = "Uncategorized"
+
+        meal_time = get_meal_time(primary_cat_name)
+
+        bucket = grouped[meal_time]
+        cat_key = str(primary_cat_id)
+
+        if cat_key not in bucket["categories"]:
+            bucket["categories"][cat_key] = {
+                "category_id": primary_cat_id,
+                "category_name": primary_cat_name,
+                "orders": [],
+            }
+
+        bucket["categories"][cat_key]["orders"].append(
+            payload
+        )
+        bucket["order_count"] += 1
+
+    # Convert category dicts to lists
+    result_groups = []
+    for bucket in meal_time_order:
+        data = grouped[bucket]
+        categories_list = list(data["categories"].values())
+        categories_list.sort(
+            key=lambda c: c["category_name"].lower()
+        )
+        result_groups.append({
+            "meal_time": data["meal_time"],
+            "label": data["label"],
+            "order_count": data["order_count"],
+            "categories": categories_list,
+        })
+
+    total_orders = sum(
+        g["order_count"] for g in result_groups
+    )
+
+    return {
+        "date": target_date,
+        "total": total_orders,
+        "groups": result_groups,
+    }
+
+
 @router.get(
     "/orders/tomorrow",
 )
