@@ -1,13 +1,14 @@
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, Enum as SqlEnum, Float, Integer, String, JSON
+from sqlalchemy import DateTime, Enum as SqlEnum, Float, Integer, String, JSON, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 
 
 class OrderStatus(str, Enum):
+    SCHEDULED = "scheduled"
     PENDING = "pending"
     CONFIRMED = "confirmed"
     PREPARING = "preparing"
@@ -47,4 +48,12 @@ class Order(Base):
         DateTime,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
+    )
+    
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_id",
+            "delivery_date",
+            name="unique_subscription_delivery_date",
+        ),
     )

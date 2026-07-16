@@ -34,6 +34,9 @@ from app.modules.chef.admin_router import (
 from app.modules.plan_menus.router import (
     router as plan_menus_router,
 )
+from app.modules.orders.automation_router import (
+    router as order_automation_router,
+)
 
 
 # Create database tables
@@ -82,6 +85,7 @@ app.include_router(chatbot_router)
 app.include_router(chef_router)
 app.include_router(chef_admin_router)
 app.include_router(plan_menus_router)
+app.include_router(order_automation_router)
 
 @app.get("/")
 def root():
