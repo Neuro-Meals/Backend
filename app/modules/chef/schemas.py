@@ -122,8 +122,48 @@ class ChefAllergySummaryResponse(BaseModel):
     total_orders: int
     customers_with_allergies: int
     allergies: list[ChefAllergySummaryItem]
-    customers: list[ChefAllergyCustomerResponse]    
+    customers: list[ChefAllergyCustomerResponse] 
+    
+class BulkAssignChefDriverRequest(BaseModel):
+    driver_id: int = Field(..., ge=1)
 
+    order_ids: list[int] = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+    )
+
+    scheduled_at: datetime | None = None
+
+
+class BulkDriverAssignmentItemResponse(BaseModel):
+    order_id: int
+    delivery_id: int
+    driver_id: int
+    order_status: str
+    delivery_status: str
+
+
+class BulkDriverAssignmentErrorResponse(BaseModel):
+    order_id: int
+    reason: str
+
+
+class BulkChefDriverAssignmentResponse(BaseModel):
+    message: str
+    driver_id: int
+
+    requested_orders: int
+    assigned_orders: int
+    failed_orders: int
+
+    assignments: list[
+        BulkDriverAssignmentItemResponse
+    ]
+
+    failures: list[
+        BulkDriverAssignmentErrorResponse
+    ]       
 
 class ChefDeliveryAssignmentResponse(BaseModel):
     message: str

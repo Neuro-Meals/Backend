@@ -8,6 +8,8 @@ from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.chef.schemas import (
     AssignChefDriverRequest,
+    BulkAssignChefDriverRequest,
+    BulkChefDriverAssignmentResponse,
     ChefAllergySummaryResponse,
     ChefDashboardResponse,
     ChefDeliveryAssignmentResponse,
@@ -21,6 +23,7 @@ from app.modules.orders.models import Order, OrderStatus
 from app.modules.users.models import User, UserRole
 from collections import defaultdict
 from typing import Any
+from sqlalchemy.exc import IntegrityError
 
 
 router = APIRouter(
@@ -41,6 +44,73 @@ KITCHEN_ORDER_STATUSES = [
     OrderStatus.PREPARING,
     OrderStatus.READY_FOR_DELIVERY,
 ]
+
+def assign_order_to_driver(
+    db: Session,
+    order: Order,
+    driver: User,
+    scheduled_at: datetime | None = None,
+) -> Delivery:
+    if order.status != OrderStatus.READY_FOR_DELIVERY:
+        raise ValueError(
+            "Order is not ready for delivery"
+        )
+
+    if not order.delivery_address:
+        raise ValueError(
+            "Order does not have a delivery address"
+        )
+
+    delivery = (
+        db.query(Delivery)
+        .filter(Delivery.order_id == order.id)
+        .first()
+    )
+
+    if delivery is not None:
+        if delivery.status == DeliveryStatus.DELIVERED:
+            raise ValueError(
+                "Order delivery is already completed"
+            )
+
+        if delivery.status == DeliveryStatus.CANCELLED:
+            raise ValueError(
+                "Order delivery is cancelled"
+            )
+
+        delivery.driver_id = driver.id
+        delivery.status = DeliveryStatus.ASSIGNED
+
+        if scheduled_at is not None:
+            delivery.scheduled_at = scheduled_at
+
+        if not delivery.delivery_address:
+            delivery.delivery_address = (
+                order.delivery_address
+            )
+
+        if not delivery.delivery_notes:
+            delivery.delivery_notes = (
+                order.delivery_notes
+            )
+
+    else:
+        delivery = Delivery(
+            order_id=order.id,
+            user_id=order.user_id,
+            driver_id=driver.id,
+            status=DeliveryStatus.ASSIGNED,
+            delivery_address=order.delivery_address,
+            delivery_notes=order.delivery_notes,
+            scheduled_at=(
+                scheduled_at
+                or order.delivery_date
+            ),
+        )
+
+        db.add(delivery)
+
+    return delivery
 
 
 def get_date_range(target_date: date) -> tuple[datetime, datetime]:
@@ -838,6 +908,158 @@ def chef_ready_for_delivery_orders(
             for order in orders
         ],
     }
+    
+@router.post(
+    "/orders/bulk-assign-driver",
+    response_model=BulkChefDriverAssignmentResponse,
+)
+def chef_bulk_assign_driver(
+    payload: BulkAssignChefDriverRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.CHEF,
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+            UserRole.DELIVERY_MANAGER,
+        )
+    ),
+):
+    driver = (
+        db.query(User)
+        .filter(
+            User.id == payload.driver_id,
+            User.role == UserRole.DRIVER,
+            User.is_active.is_(True),
+        )
+        .first()
+    )
+
+    if driver is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Driver not found or inactive",
+        )
+
+    unique_order_ids = list(
+        dict.fromkeys(payload.order_ids)
+    )
+
+    assignments = []
+    failures = []
+
+    for order_id in unique_order_ids:
+        order = (
+            db.query(Order)
+            .filter(Order.id == order_id)
+            .first()
+        )
+
+        if order is None:
+            failures.append(
+                {
+                    "order_id": order_id,
+                    "reason": "Order not found",
+                }
+            )
+            continue
+
+        if (
+            order.status
+            != OrderStatus.READY_FOR_DELIVERY
+        ):
+            failures.append(
+                {
+                    "order_id": order.id,
+                    "reason": (
+                        "Order must be ready_for_delivery "
+                        "before assigning a driver"
+                    ),
+                }
+            )
+            continue
+
+        if not order.delivery_address:
+            failures.append(
+                {
+                    "order_id": order.id,
+                    "reason": (
+                        "Order delivery address is missing"
+                    ),
+                }
+            )
+            continue
+
+        try:
+            delivery = assign_order_to_driver(
+                db=db,
+                order=order,
+                driver=driver,
+                scheduled_at=payload.scheduled_at,
+            )
+
+            # Flush so a newly created delivery receives its ID.
+            db.flush()
+
+            assignments.append(
+                {
+                    "order_id": order.id,
+                    "delivery_id": delivery.id,
+                    "driver_id": driver.id,
+                    "order_status": enum_value(
+                        order.status
+                    ),
+                    "delivery_status": enum_value(
+                        delivery.status
+                    ),
+                }
+            )
+
+        except ValueError as exc:
+            failures.append(
+                {
+                    "order_id": order.id,
+                    "reason": str(exc),
+                }
+            )
+
+        except IntegrityError:
+            db.rollback()
+
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "A database conflict occurred while "
+                    "assigning the selected orders"
+                ),
+            )
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Bulk driver assignment could not "
+                "be completed"
+            ),
+        ) from exc
+
+    return {
+        "message": (
+            "Bulk driver assignment completed"
+        ),
+        "driver_id": driver.id,
+        "requested_orders": len(
+            unique_order_ids
+        ),
+        "assigned_orders": len(assignments),
+        "failed_orders": len(failures),
+        "assignments": assignments,
+        "failures": failures,
+    }    
 
 @router.get(
     "/orders/{order_id}",
@@ -1048,15 +1270,6 @@ def chef_assign_driver(
         order_id=order_id,
     )
 
-    if order.status != OrderStatus.READY_FOR_DELIVERY:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Driver can only be assigned after the order "
-                "is ready for delivery"
-            ),
-        )
-
     driver = (
         db.query(User)
         .filter(
@@ -1073,67 +1286,35 @@ def chef_assign_driver(
             detail="Driver not found or inactive",
         )
 
-    existing_delivery = (
-        db.query(Delivery)
-        .filter(Delivery.order_id == order.id)
-        .first()
-    )
-
-    if existing_delivery:
-        if existing_delivery.status in {
-            DeliveryStatus.DELIVERED,
-            DeliveryStatus.CANCELLED,
-        }:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "This order already has a completed or "
-                    "cancelled delivery"
-                ),
-            )
-
-        existing_delivery.driver_id = driver.id
-        existing_delivery.status = DeliveryStatus.ASSIGNED
-
-        if payload.scheduled_at is not None:
-            existing_delivery.scheduled_at = (
-                payload.scheduled_at
-            )
-
-        delivery = existing_delivery
-
-    else:
-        delivery_address = (
-            order.delivery_address
-            or getattr(driver, "address", None)
+    try:
+        delivery = assign_order_to_driver(
+            db=db,
+            order=order,
+            driver=driver,
+            scheduled_at=payload.scheduled_at,
         )
 
-        if not order.delivery_address:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Order does not have a delivery address"
-                ),
-            )
+        db.commit()
+        db.refresh(delivery)
 
-        delivery = Delivery(
-            order_id=order.id,
-            user_id=order.user_id,
-            driver_id=driver.id,
-            status=DeliveryStatus.ASSIGNED,
-            delivery_address=order.delivery_address,
-            delivery_notes=order.delivery_notes,
-            scheduled_at=(
-                payload.scheduled_at
-                or order.delivery_date
+    except ValueError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except IntegrityError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Driver assignment could not "
+                "be completed"
             ),
-        )
-
-        db.add(delivery)
-
-    db.commit()
-    db.refresh(delivery)
-    db.refresh(order)
+        ) from exc
 
     return {
         "message": "Driver assigned successfully",
