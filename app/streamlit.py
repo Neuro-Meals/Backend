@@ -203,6 +203,414 @@ def render_subscription_dashboard(data):
         st.json(data)
 
 
+
+def fetch_api_json(path, *, params=None, timeout=30):
+    """Fetch JSON without automatically printing the full raw response."""
+    url = f"{API_BASE}{path}"
+
+    try:
+        response = requests.get(
+            url,
+            headers=headers(),
+            params=params,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        st.error(f"Request failed: {exc}")
+        return None, None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = response.text
+
+    return response, payload
+
+
+def extract_order_list(payload):
+    """Accept list responses and paginated {'data': [...]} responses."""
+    if isinstance(payload, list):
+        return payload
+
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list):
+            return data
+
+        orders = payload.get("orders")
+        if isinstance(orders, list):
+            return orders
+
+    return []
+
+
+def normalize_order_items(items):
+    """Return a predictable list of meal-item dictionaries."""
+    if isinstance(items, list):
+        return [item for item in items if isinstance(item, dict)]
+
+    if isinstance(items, dict):
+        nested = items.get("items")
+        if isinstance(nested, list):
+            return [item for item in nested if isinstance(item, dict)]
+        return [items]
+
+    return []
+
+
+def item_quantity(item):
+    value = (
+        item.get("quantity")
+        or item.get("qty")
+        or item.get("count")
+        or 1
+    )
+
+    try:
+        return max(int(value), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def item_category(item):
+    name = (
+        item.get("category_name")
+        or item.get("category_name_en")
+        or item.get("meal_category")
+        or item.get("category")
+        or "Uncategorized"
+    )
+
+    if isinstance(name, dict):
+        name = name.get("name_en") or name.get("name") or "Uncategorized"
+
+    return str(name).strip() or "Uncategorized"
+
+
+def item_category_ar(item):
+    return (
+        item.get("category_name_ar")
+        or item.get("category_ar")
+        or None
+    )
+
+
+def item_meal_name(item):
+    name = (
+        item.get("meal_name")
+        or item.get("name_en")
+        or item.get("name")
+        or item.get("title")
+        or "Unknown meal"
+    )
+    return str(name).strip() or "Unknown meal"
+
+
+def item_meal_name_ar(item):
+    return item.get("meal_name_ar") or item.get("name_ar") or None
+
+
+def chef_customer_payload(order):
+    customer = order.get("customer") or {}
+
+    full_name = (
+        customer.get("full_name")
+        or " ".join(
+            part
+            for part in [
+                customer.get("first_name"),
+                customer.get("last_name"),
+            ]
+            if part
+        )
+        or order.get("customer_name")
+        or f"Customer #{order.get('user_id', 'N/A')}"
+    )
+
+    return {
+        "id": customer.get("id") or order.get("user_id"),
+        "name": full_name,
+        "phone": customer.get("phone") or order.get("customer_phone"),
+        "email": customer.get("email") or order.get("customer_email"),
+        "allergies": customer.get("allergies") or order.get("allergies") or [],
+    }
+
+
+def build_chef_category_view(orders):
+    """
+    Group orders as:
+    category -> meal -> total quantity + customers requiring the meal.
+    """
+    grouped = {}
+
+    for order in orders:
+        customer = chef_customer_payload(order)
+        delivery = order.get("delivery") or {}
+
+        for item in normalize_order_items(order.get("items")):
+            category_name = item_category(item)
+            meal_name = item_meal_name(item)
+            quantity = item_quantity(item)
+
+            category_key = category_name.lower()
+            meal_id = item.get("meal_id") or item.get("id")
+            meal_key = (
+                f"id:{meal_id}"
+                if meal_id is not None
+                else f"name:{meal_name.lower()}"
+            )
+
+            category_entry = grouped.setdefault(
+                category_key,
+                {
+                    "name": category_name,
+                    "name_ar": item_category_ar(item),
+                    "total_portions": 0,
+                    "meals": {},
+                },
+            )
+
+            meal_entry = category_entry["meals"].setdefault(
+                meal_key,
+                {
+                    "meal_id": meal_id,
+                    "name": meal_name,
+                    "name_ar": item_meal_name_ar(item),
+                    "total_quantity": 0,
+                    "ingredients": item.get("ingredients") or [],
+                    "allergens": item.get("allergens") or [],
+                    "calories": item.get("calories"),
+                    "customers": [],
+                },
+            )
+
+            category_entry["total_portions"] += quantity
+            meal_entry["total_quantity"] += quantity
+            meal_entry["customers"].append(
+                {
+                    "order_id": order.get("id"),
+                    "order_number": order.get("order_number"),
+                    "order_status": order.get("status"),
+                    "customer_id": customer["id"],
+                    "customer": customer["name"],
+                    "phone": customer["phone"],
+                    "customer_allergies": customer["allergies"],
+                    "quantity": quantity,
+                    "address": order.get("delivery_address"),
+                    "delivery_notes": order.get("delivery_notes"),
+                    "delivery_id": delivery.get("id"),
+                    "driver_id": delivery.get("driver_id"),
+                    "delivery_status": delivery.get("status"),
+                }
+            )
+
+    return sorted(
+        grouped.values(),
+        key=lambda category: category["name"].lower(),
+    )
+
+
+def render_chef_category_board(orders, *, title):
+    """Render kitchen quantities and customer-level detail by meal category."""
+    st.subheader(title)
+
+    if not orders:
+        st.info("No orders were returned for this date.")
+        return
+
+    grouped = build_chef_category_view(orders)
+
+    total_portions = sum(
+        category["total_portions"]
+        for category in grouped
+    )
+    distinct_meals = sum(
+        len(category["meals"])
+        for category in grouped
+    )
+
+    metrics = st.columns(4)
+    metrics[0].metric("Customer Orders", len(orders))
+    metrics[1].metric("Meal Categories", len(grouped))
+    metrics[2].metric("Distinct Meals", distinct_meals)
+    metrics[3].metric("Total Portions", total_portions)
+
+    if not grouped:
+        st.warning(
+            "Orders exist, but no usable meal items were found in order.items."
+        )
+        return
+
+    st.divider()
+
+    for category in grouped:
+        category_title = category["name"]
+        if category.get("name_ar"):
+            category_title += f" / {category['name_ar']}"
+
+        st.markdown(
+            f"## {category_title} — "
+            f"{category['total_portions']} portions"
+        )
+
+        meal_rows = []
+        for meal in category["meals"].values():
+            meal_rows.append(
+                {
+                    "meal_id": meal["meal_id"],
+                    "meal": meal["name"],
+                    "meal_ar": meal["name_ar"],
+                    "total_quantity": meal["total_quantity"],
+                    "customers": len(meal["customers"]),
+                    "allergens": ", ".join(meal["allergens"]) or "None",
+                }
+            )
+
+        st.dataframe(
+            sorted(
+                meal_rows,
+                key=lambda row: (
+                    -row["total_quantity"],
+                    row["meal"].lower(),
+                ),
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        for meal in sorted(
+            category["meals"].values(),
+            key=lambda row: (
+                -row["total_quantity"],
+                row["name"].lower(),
+            ),
+        ):
+            meal_title = (
+                f"{meal['name']} — "
+                f"{meal['total_quantity']} portions"
+            )
+            if meal.get("name_ar"):
+                meal_title += f" / {meal['name_ar']}"
+
+            with st.expander(meal_title, expanded=True):
+                summary_cols = st.columns(4)
+                summary_cols[0].metric(
+                    "Total Quantity",
+                    meal["total_quantity"],
+                )
+                summary_cols[1].metric(
+                    "Customers",
+                    len(meal["customers"]),
+                )
+                summary_cols[2].metric(
+                    "Calories / Portion",
+                    meal.get("calories") or 0,
+                )
+                summary_cols[3].metric(
+                    "Orders Ready",
+                    sum(
+                        1
+                        for customer in meal["customers"]
+                        if customer.get("order_status")
+                        == "ready_for_delivery"
+                    ),
+                )
+
+                st.write(
+                    "**Ingredients:**",
+                    ", ".join(meal["ingredients"]) or "Not provided",
+                )
+                st.write(
+                    "**Meal allergens:**",
+                    ", ".join(meal["allergens"]) or "None",
+                )
+
+                customer_rows = []
+                for customer in meal["customers"]:
+                    allergies = customer.get("customer_allergies") or []
+                    if isinstance(allergies, str):
+                        allergy_text = allergies
+                    else:
+                        allergy_text = ", ".join(
+                            str(value) for value in allergies
+                        )
+
+                    customer_rows.append(
+                        {
+                            "order_id": customer.get("order_id"),
+                            "order_number": customer.get("order_number"),
+                            "customer": customer.get("customer"),
+                            "phone": customer.get("phone"),
+                            "quantity": customer.get("quantity"),
+                            "allergies": allergy_text or "None",
+                            "order_status": customer.get("order_status"),
+                            "address": customer.get("address"),
+                            "delivery_notes": customer.get("delivery_notes"),
+                            "delivery_id": customer.get("delivery_id"),
+                            "driver_id": customer.get("driver_id"),
+                            "delivery_status": (
+                                customer.get("delivery_status")
+                                or "not_created"
+                            ),
+                        }
+                    )
+
+                st.dataframe(
+                    customer_rows,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+
+def render_chef_delivery_board(orders):
+    """Show which ready orders need a driver and which are assigned."""
+    st.subheader("Delivery Readiness Board")
+
+    rows = []
+    for order in orders:
+        customer = chef_customer_payload(order)
+        delivery = order.get("delivery") or {}
+
+        meal_names = []
+        total_quantity = 0
+        categories = []
+
+        for item in normalize_order_items(order.get("items")):
+            meal_names.append(item_meal_name(item))
+            total_quantity += item_quantity(item)
+            category = item_category(item)
+            if category not in categories:
+                categories.append(category)
+
+        rows.append(
+            {
+                "order_id": order.get("id"),
+                "order_number": order.get("order_number"),
+                "customer": customer["name"],
+                "phone": customer["phone"],
+                "categories": ", ".join(categories),
+                "meals": ", ".join(meal_names),
+                "portions": total_quantity,
+                "address": order.get("delivery_address"),
+                "order_status": order.get("status"),
+                "delivery_id": delivery.get("id"),
+                "driver_id": delivery.get("driver_id"),
+                "delivery_status": (
+                    delivery.get("status")
+                    or "not_created"
+                ),
+            }
+        )
+
+    if rows:
+        st.dataframe(
+            rows,
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No ready-for-delivery orders were returned.")
+
 menu = st.sidebar.selectbox(
     "Choose Module",
     [
@@ -1602,6 +2010,10 @@ elif menu == "Chef":
         st.subheader("Kitchen Operations")
 
         (
+            today_category_tab,
+            tomorrow_category_tab,
+            production_tab,
+            delivery_board_tab,
             dashboard_tab,
             orders_tab,
             one_order_tab,
@@ -1612,6 +2024,10 @@ elif menu == "Chef":
             bulk_assign_tab,
         ) = st.tabs(
             [
+                "Today by Category",
+                "Tomorrow by Category",
+                "Production Summary",
+                "Delivery Board",
                 "Dashboard",
                 "Kitchen Orders",
                 "Order Details",
@@ -1622,6 +2038,261 @@ elif menu == "Chef":
                 "Bulk Assign Driver",
             ]
         )
+
+
+        with today_category_tab:
+            st.subheader("Today's Kitchen Plan by Category")
+            st.caption(
+                "Shows Breakfast, Lunch, Dinner or other categories; "
+                "each meal's total quantity; and every customer who needs it."
+            )
+
+            include_completed_today = st.checkbox(
+                "Include delivered and cancelled orders",
+                value=False,
+                key="chef_today_include_completed",
+            )
+
+            if st.button(
+                "Load Today's Orders by Category",
+                key="chef_today_category_btn",
+                use_container_width=True,
+            ):
+                response, payload = fetch_api_json(
+                    "/chef/orders/today",
+                    params={
+                        "include_completed": include_completed_today
+                    },
+                )
+
+                if response is None:
+                    pass
+                elif response.status_code != 200:
+                    st.error(f"HTTP {response.status_code}")
+                    st.json(payload)
+                else:
+                    orders = extract_order_list(payload)
+                    render_chef_category_board(
+                        orders,
+                        title="Today's Cooking Requirements",
+                    )
+
+                    with st.expander("Raw API Response"):
+                        st.json(payload)
+
+        with tomorrow_category_tab:
+            st.subheader("Tomorrow's Kitchen Preview by Category")
+            st.caption(
+                "Use this view to prepare ingredients and understand "
+                "tomorrow's meal quantities before cooking begins."
+            )
+
+            include_completed_tomorrow = st.checkbox(
+                "Include completed orders",
+                value=False,
+                key="chef_tomorrow_include_completed",
+            )
+
+            if st.button(
+                "Load Tomorrow's Orders by Category",
+                key="chef_tomorrow_category_btn",
+                use_container_width=True,
+            ):
+                response, payload = fetch_api_json(
+                    "/chef/orders/tomorrow",
+                    params={
+                        "include_completed": include_completed_tomorrow
+                    },
+                )
+
+                if response is None:
+                    pass
+                elif response.status_code != 200:
+                    st.error(f"HTTP {response.status_code}")
+                    st.json(payload)
+                else:
+                    orders = extract_order_list(payload)
+                    render_chef_category_board(
+                        orders,
+                        title="Tomorrow's Planned Meals",
+                    )
+
+                    with st.expander("Raw API Response"):
+                        st.json(payload)
+
+        with production_tab:
+            st.subheader("Production and Allergy Summary")
+            st.caption(
+                "Combines the backend meal summary and allergy summary "
+                "for the selected production date."
+            )
+
+            production_date = st.date_input(
+                "Production Date",
+                key="chef_production_date",
+            )
+
+            if st.button(
+                "Load Production Summary",
+                key="chef_production_summary_btn",
+                use_container_width=True,
+            ):
+                date_value = production_date.isoformat()
+
+                summary_response, summary_payload = fetch_api_json(
+                    "/chef/meals/summary",
+                    params={"date": date_value},
+                )
+                allergy_response, allergy_payload = fetch_api_json(
+                    "/chef/allergies/summary",
+                    params={"date": date_value},
+                )
+
+                left, right = st.columns(2)
+
+                with left:
+                    st.write("### Meal Quantities")
+                    if (
+                        summary_response is not None
+                        and summary_response.status_code == 200
+                        and isinstance(summary_payload, dict)
+                    ):
+                        meal_metrics = st.columns(2)
+                        meal_metrics[0].metric(
+                            "Orders",
+                            summary_payload.get("total_orders", 0),
+                        )
+                        meal_metrics[1].metric(
+                            "Total Meals",
+                            summary_payload.get("total_meals", 0),
+                        )
+
+                        meals = summary_payload.get("meals") or []
+                        if meals:
+                            st.dataframe(
+                                meals,
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                        else:
+                            st.info(
+                                "No meal quantities were returned."
+                            )
+                    elif summary_response is not None:
+                        st.error(
+                            f"HTTP {summary_response.status_code}"
+                        )
+                        st.json(summary_payload)
+
+                with right:
+                    st.write("### Allergy Alerts")
+                    if (
+                        allergy_response is not None
+                        and allergy_response.status_code == 200
+                        and isinstance(allergy_payload, dict)
+                    ):
+                        allergy_metrics = st.columns(2)
+                        allergy_metrics[0].metric(
+                            "Orders",
+                            allergy_payload.get("total_orders", 0),
+                        )
+                        allergy_metrics[1].metric(
+                            "Customers with Allergies",
+                            allergy_payload.get(
+                                "customers_with_allergies",
+                                0,
+                            ),
+                        )
+
+                        allergies = (
+                            allergy_payload.get("allergies") or []
+                        )
+                        if allergies:
+                            st.dataframe(
+                                allergies,
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+                        else:
+                            st.success(
+                                "No customer allergy alerts returned."
+                            )
+
+                        customers = (
+                            allergy_payload.get("customers") or []
+                        )
+                        if customers:
+                            with st.expander(
+                                "Customers requiring allergy attention",
+                                expanded=True,
+                            ):
+                                st.dataframe(
+                                    customers,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+                    elif allergy_response is not None:
+                        st.error(
+                            f"HTTP {allergy_response.status_code}"
+                        )
+                        st.json(allergy_payload)
+
+        with delivery_board_tab:
+            st.subheader("Ready Meals and Delivery Options")
+            st.caption(
+                "Shows every ready order, its customer, food, address, "
+                "and whether a driver has already been assigned."
+            )
+
+            delivery_date_filter = st.date_input(
+                "Ready-order Date Filter",
+                key="chef_delivery_board_date",
+            )
+            unassigned_only_board = st.checkbox(
+                "Show only orders needing a driver",
+                value=False,
+                key="chef_delivery_board_unassigned",
+            )
+
+            if st.button(
+                "Load Delivery Board",
+                key="chef_delivery_board_btn",
+                use_container_width=True,
+            ):
+                response, payload = fetch_api_json(
+                    "/chef/orders/ready-for-delivery",
+                    params={
+                        "date": delivery_date_filter.isoformat(),
+                        "unassigned_only": unassigned_only_board,
+                    },
+                )
+
+                if response is None:
+                    pass
+                elif response.status_code != 200:
+                    st.error(f"HTTP {response.status_code}")
+                    st.json(payload)
+                else:
+                    orders = extract_order_list(payload)
+                    render_chef_delivery_board(orders)
+
+                    ready_order_ids = [
+                        str(order.get("id"))
+                        for order in orders
+                        if order.get("id") is not None
+                    ]
+
+                    if ready_order_ids:
+                        st.info(
+                            "Ready Order IDs: "
+                            + ", ".join(ready_order_ids)
+                        )
+                        st.caption(
+                            "Copy these IDs into the Bulk Assign Driver tab."
+                        )
+
+                    with st.expander("Raw API Response"):
+                        st.json(payload)
 
         with dashboard_tab:
             st.write(
@@ -3325,9 +3996,7 @@ elif menu == "Payments":
                     if res.status_code == 200:
                         st.success("Tap payment is captured and verified.")
 
-    # ------------------------------------------------------------
-    # CUSTOMER PAYMENT HISTORY
-    # ------------------------------------------------------------
+
     with payments_tab:
         st.subheader("My Payments")
 
@@ -3369,9 +4038,6 @@ elif menu == "Payments":
                     elif isinstance(payments, list):
                         st.info("No payments found.")
 
-    # ------------------------------------------------------------
-    # ADMIN / FINANCE PAYMENT LIST
-    # ------------------------------------------------------------
     with admin_tab:
         st.subheader("Admin Payment List")
         st.caption(
