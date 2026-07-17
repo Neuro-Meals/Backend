@@ -1,3 +1,4 @@
+import json
 import requests
 import streamlit as st
 
@@ -13,17 +14,23 @@ if "token" not in st.session_state:
 if "user" not in st.session_state:
     st.session_state.user = None
 
-if "tap_subscription_id" not in st.session_state:
-    st.session_state.tap_subscription_id = 1
+if "moyasar_subscription_id" not in st.session_state:
+    st.session_state.moyasar_subscription_id = 1
 
-if "tap_payment_id" not in st.session_state:
-    st.session_state.tap_payment_id = None
+if "moyasar_payment_id" not in st.session_state:
+    st.session_state.moyasar_payment_id = None
 
-if "tap_charge_id" not in st.session_state:
-    st.session_state.tap_charge_id = ""
+if "moyasar_provider_payment_id" not in st.session_state:
+    st.session_state.moyasar_provider_payment_id = ""
 
-if "tap_checkout_url" not in st.session_state:
-    st.session_state.tap_checkout_url = ""
+if "moyasar_checkout_config" not in st.session_state:
+    st.session_state.moyasar_checkout_config = {}
+
+if "moyasar_plan_change_id" not in st.session_state:
+    st.session_state.moyasar_plan_change_id = 1
+
+if "moyasar_plan_change_payment_id" not in st.session_state:
+    st.session_state.moyasar_plan_change_payment_id = None
 
 if "chatbot_messages" not in st.session_state:
     st.session_state.chatbot_messages = []
@@ -34,8 +41,8 @@ for state_key, default_value in {
     "flow_password": "",
     "flow_subscription_id": 1,
     "flow_payment_id": None,
-    "flow_tap_charge_id": "",
-    "flow_checkout_url": "",
+    "flow_moyasar_payment_id": "",
+    "flow_checkout_config": {},
     "flow_order_id": 1,
 }.items():
     if state_key not in st.session_state:
@@ -3485,7 +3492,7 @@ elif menu == "End-to-End Flow":
                 st.session_state.flow_subscription_id = subscription.get(
                     "id", 1
                 )
-                st.session_state.tap_subscription_id = (
+                st.session_state.moyasar_subscription_id = (
                     st.session_state.flow_subscription_id
                 )
                 st.success(
@@ -3501,6 +3508,13 @@ elif menu == "End-to-End Flow":
             api_request("GET", "/subscriptions/my")
 
     with payment_tab:
+        st.subheader("Moyasar Payment Flow")
+        st.caption(
+            "Create the local pending payment, create the real payment with the "
+            "Moyasar frontend form, attach the Moyasar payment UUID, then verify "
+            "the local payment."
+        )
+
         subscription_id = st.number_input(
             "Subscription ID",
             min_value=1,
@@ -3509,7 +3523,7 @@ elif menu == "End-to-End Flow":
         )
 
         if st.button(
-            "POST /payments/create-checkout",
+            "1. POST /payments/create-checkout",
             key="flow_checkout_btn",
             use_container_width=True,
         ):
@@ -3522,35 +3536,74 @@ elif menu == "End-to-End Flow":
             if response is not None and response.status_code == 200:
                 payload = response.json()
                 st.session_state.flow_payment_id = payload.get("payment_id")
-                st.session_state.flow_tap_charge_id = payload.get(
-                    "tap_charge_id", ""
-                )
-                st.session_state.flow_checkout_url = payload.get(
-                    "checkout_url", ""
-                )
+                st.session_state.flow_checkout_config = payload
+                st.session_state.moyasar_subscription_id = int(subscription_id)
+                st.session_state.moyasar_payment_id = payload.get("payment_id")
+                st.session_state.moyasar_checkout_config = payload
 
-        if st.session_state.flow_checkout_url:
-            st.link_button(
-                "Open Tap Checkout",
-                st.session_state.flow_checkout_url,
-                use_container_width=True,
+        checkout_config = st.session_state.get("flow_checkout_config") or {}
+        if checkout_config:
+            st.success(
+                f"Local payment #{checkout_config.get('payment_id')} is ready "
+                "for the Moyasar frontend form."
+            )
+            st.json(checkout_config)
+
+            st.info(
+                "Use the publishable key, amount, currency, callback_url and "
+                "metadata above in your Moyasar frontend form. After Moyasar "
+                "creates the payment, copy its UUID below."
             )
 
-        tap_charge_id = st.text_input(
-            "Tap Charge ID",
-            st.session_state.flow_tap_charge_id,
-            key="flow_tap_charge_id_input",
+        provider_payment_id = st.text_input(
+            "Moyasar Payment UUID",
+            value=st.session_state.get("flow_moyasar_payment_id", ""),
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            key="flow_moyasar_payment_id_input",
         )
+
         if st.button(
-            "GET /payments/verify-charge/{tap_id}",
+            "2. POST /payments/attach-moyasar-payment",
+            key="flow_attach_payment_btn",
+            use_container_width=True,
+        ):
+            if not st.session_state.flow_payment_id:
+                st.error("Create the local checkout first.")
+            elif not provider_payment_id.strip():
+                st.error("Enter the Moyasar payment UUID.")
+            else:
+                response = api_request(
+                    "POST",
+                    "/payments/attach-moyasar-payment",
+                    json={
+                        "local_payment_id": int(
+                            st.session_state.flow_payment_id
+                        ),
+                        "moyasar_payment_id": provider_payment_id.strip(),
+                    },
+                    timeout=45,
+                )
+                if response is not None and response.status_code == 200:
+                    st.session_state.flow_moyasar_payment_id = (
+                        provider_payment_id.strip()
+                    )
+                    st.session_state.moyasar_provider_payment_id = (
+                        provider_payment_id.strip()
+                    )
+
+        if st.button(
+            "3. GET /payments/verify/{local_payment_id}",
             key="flow_verify_payment_btn",
             use_container_width=True,
         ):
-            api_request(
-                "GET",
-                f"/payments/verify-charge/{tap_charge_id.strip()}",
-                timeout=45,
-            )
+            if not st.session_state.flow_payment_id:
+                st.error("Create the local checkout first.")
+            else:
+                api_request(
+                    "GET",
+                    f"/payments/verify/{int(st.session_state.flow_payment_id)}",
+                    timeout=45,
+                )
 
     with dashboard_tab:
         st.write(
@@ -3731,368 +3784,613 @@ elif menu == "Custom Endpoint":
 # ================= PAYMENTS =================
 
 elif menu == "Payments":
-    st.header("Tap Payment Tester")
+    st.header("Moyasar Payment API Tester")
 
     if not st.session_state.token:
-        st.warning("Login as a customer before testing subscriptions and payments.")
+        st.warning(
+            "Login first. Customer endpoints require a customer token; "
+            "the admin list requires admin, super_admin, or finance_manager."
+        )
 
-    flow_tab, checkout_tab, verify_tab, payments_tab, admin_tab = st.tabs(
+    (
+        flow_tab,
+        checkout_tab,
+        attach_tab,
+        verify_tab,
+        plan_change_tab,
+        payments_tab,
+        admin_tab,
+        webhook_tab,
+    ) = st.tabs(
         [
             "Complete Flow",
-            "Create Tap Checkout",
-            "Verify Tap Charge",
+            "Create Checkout",
+            "Attach Moyasar ID",
+            "Verify Payment",
+            "Plan Change Checkout",
             "My Payments",
             "Admin Payments",
+            "Webhook Notes",
         ]
     )
 
     # ------------------------------------------------------------
-    # COMPLETE SUBSCRIPTION -> TAP PAYMENT FLOW
+    # COMPLETE SUBSCRIPTION -> MOYASAR PAYMENT FLOW
     # ------------------------------------------------------------
     with flow_tab:
-        st.subheader("Complete Subscription and Tap Payment Flow")
+        st.subheader("Complete Subscription and Moyasar Payment Flow")
         st.caption(
-            "Use this tab to create a subscription, create a Tap sandbox charge, "
-            "open Tap Checkout, verify the returned tap_id, and confirm that the "
-            "subscription becomes active and paid."
+            "This tests all backend payment endpoints in the correct order. "
+            "The actual card form must be opened by your frontend using the "
+            "configuration returned by create-checkout."
         )
 
-        col1, col2 = st.columns(2)
+        left, right = st.columns(2)
 
-        with col1:
+        with left:
             plan_id = st.number_input(
                 "Plan ID",
                 min_value=1,
                 value=1,
-                key="tap_flow_plan_id",
+                key="moyasar_flow_plan_id",
             )
             notes = st.text_area(
                 "Subscription Notes",
-                value="Tap payment test",
-                key="tap_flow_notes",
+                value="Moyasar payment test",
+                key="moyasar_flow_notes",
             )
 
             if st.button(
                 "1. Create Subscription",
-                key="tap_create_subscription",
+                key="moyasar_flow_create_subscription",
                 use_container_width=True,
             ):
-                try:
-                    res = requests.post(
-                        f"{API_BASE}/subscriptions/",
-                        json={"plan_id": int(plan_id), "notes": notes},
-                        headers=headers(),
-                        timeout=30,
+                response = api_request(
+                    "POST",
+                    "/subscriptions/",
+                    json={
+                        "plan_id": int(plan_id),
+                        "notes": notes or None,
+                    },
+                )
+                if (
+                    response is not None
+                    and response.status_code in (200, 201)
+                ):
+                    subscription = response.json()
+                    st.session_state.moyasar_subscription_id = int(
+                        subscription.get("id")
                     )
-                except requests.RequestException as exc:
-                    st.error(f"Request failed: {exc}")
-                else:
-                    show_response(res)
-
-                    if res.status_code in (200, 201):
-                        subscription = res.json()
-                        st.session_state.tap_subscription_id = subscription.get("id")
-                        st.success(
-                            f"Subscription #{st.session_state.tap_subscription_id} created."
-                        )
+                    st.success(
+                        "Stored subscription ID "
+                        f"{st.session_state.moyasar_subscription_id}."
+                    )
 
             subscription_id = st.number_input(
                 "Subscription ID",
                 min_value=1,
-                value=int(st.session_state.get("tap_subscription_id", 1)),
-                key="tap_flow_subscription_id",
+                value=int(
+                    st.session_state.get("moyasar_subscription_id", 1)
+                    or 1
+                ),
+                key="moyasar_flow_subscription_id",
             )
 
             if st.button(
-                "2. Create Tap Checkout",
-                key="tap_flow_create_checkout",
+                "2. Create Local Checkout",
+                key="moyasar_flow_create_checkout",
                 use_container_width=True,
             ):
-                try:
-                    res = requests.post(
-                        f"{API_BASE}/payments/create-checkout",
-                        json={"subscription_id": int(subscription_id)},
-                        headers=headers(),
+                response = api_request(
+                    "POST",
+                    "/payments/create-checkout",
+                    json={"subscription_id": int(subscription_id)},
+                    timeout=45,
+                )
+                if response is not None and response.status_code == 200:
+                    data = response.json()
+                    st.session_state.moyasar_subscription_id = int(
+                        subscription_id
+                    )
+                    st.session_state.moyasar_payment_id = data.get(
+                        "payment_id"
+                    )
+                    st.session_state.moyasar_checkout_config = data
+                    st.success(
+                        "Local pending payment created successfully."
+                    )
+
+            config = st.session_state.get(
+                "moyasar_checkout_config"
+            ) or {}
+
+            if config:
+                st.write("### Moyasar Frontend Configuration")
+                summary = st.columns(4)
+                summary[0].metric(
+                    "Local Payment ID",
+                    config.get("payment_id", "N/A"),
+                )
+                summary[1].metric(
+                    "Amount (smallest unit)",
+                    config.get("amount", "N/A"),
+                )
+                summary[2].metric(
+                    "Currency",
+                    config.get("currency", "N/A"),
+                )
+                summary[3].metric(
+                    "Status",
+                    config.get("status", "N/A"),
+                )
+                st.json(config)
+
+                st.code(
+                    f"""Moyasar.init({{
+  element: ".mysr-form",
+  amount: {config.get("amount", 0)},
+  currency: "{config.get("currency", "SAR")}",
+  description: {json.dumps(config.get("description", ""))},
+  publishable_api_key: "{config.get("publishable_api_key", "")}",
+  callback_url: "{config.get("callback_url", "")}",
+  supported_networks: {json.dumps(config.get("supported_networks", []))},
+  methods: {json.dumps(config.get("methods", []))},
+  metadata: {json.dumps(config.get("metadata", {}))}
+}});""",
+                    language="javascript",
+                )
+
+        with right:
+            st.write("### Attach and Verify")
+
+            local_payment_id = st.number_input(
+                "Local Payment ID",
+                min_value=1,
+                value=int(
+                    st.session_state.get("moyasar_payment_id") or 1
+                ),
+                key="moyasar_flow_local_payment_id",
+            )
+            moyasar_payment_uuid = st.text_input(
+                "Moyasar Payment UUID",
+                value=st.session_state.get(
+                    "moyasar_provider_payment_id", ""
+                ),
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+                key="moyasar_flow_provider_payment_id",
+            )
+
+            if st.button(
+                "3. Attach Moyasar Payment ID",
+                key="moyasar_flow_attach",
+                use_container_width=True,
+            ):
+                if not moyasar_payment_uuid.strip():
+                    st.error("Enter the Moyasar payment UUID.")
+                else:
+                    response = api_request(
+                        "POST",
+                        "/payments/attach-moyasar-payment",
+                        json={
+                            "local_payment_id": int(local_payment_id),
+                            "moyasar_payment_id": (
+                                moyasar_payment_uuid.strip()
+                            ),
+                        },
                         timeout=45,
                     )
-                except requests.RequestException as exc:
-                    st.error(f"Request failed: {exc}")
-                else:
-                    show_response(res)
-
-                    if res.status_code == 200:
-                        data = res.json()
-                        st.session_state.tap_charge_id = data.get("tap_charge_id")
-                        st.session_state.tap_checkout_url = data.get("checkout_url")
-                        st.session_state.tap_payment_id = data.get("payment_id")
-
-                        st.success("Tap checkout created successfully.")
-
-        with col2:
-            checkout_url = st.session_state.get("tap_checkout_url")
-            charge_id = st.session_state.get("tap_charge_id")
-
-            st.write("### Current Tap Checkout")
-            st.write(
-                f"**Payment ID:** {st.session_state.get('tap_payment_id', 'Not created')}"
-            )
-            st.write(
-                f"**Subscription ID:** "
-                f"{st.session_state.get('tap_subscription_id', subscription_id)}"
-            )
-            st.write(f"**Tap Charge ID:** {charge_id or 'Not created'}")
-
-            if checkout_url:
-                st.link_button(
-                    "3. Open Tap Secure Checkout",
-                    checkout_url,
-                    use_container_width=True,
-                )
-                st.info(
-                    "Complete the sandbox payment. Tap will redirect to your "
-                    "success page with a query parameter such as ?tap_id=chg_..."
-                )
-            else:
-                st.warning("Create a checkout first.")
-
-            returned_tap_id = st.text_input(
-                "Tap ID returned after payment",
-                value=charge_id or "",
-                placeholder="chg_TS...",
-                key="tap_flow_verify_id",
-            )
+                    if (
+                        response is not None
+                        and response.status_code == 200
+                    ):
+                        st.session_state.moyasar_payment_id = int(
+                            local_payment_id
+                        )
+                        st.session_state.moyasar_provider_payment_id = (
+                            moyasar_payment_uuid.strip()
+                        )
+                        st.success("Moyasar payment ID attached.")
 
             if st.button(
-                "4. Verify Tap Payment",
-                key="tap_flow_verify",
+                "4. Verify Payment",
+                key="moyasar_flow_verify",
                 use_container_width=True,
             ):
-                if not returned_tap_id.strip():
-                    st.error("Enter the Tap charge ID (tap_id).")
-                else:
-                    try:
-                        res = requests.get(
-                            f"{API_BASE}/payments/verify-charge/"
-                            f"{returned_tap_id.strip()}",
-                            headers=headers(),
-                            timeout=45,
+                response = api_request(
+                    "GET",
+                    f"/payments/verify/{int(local_payment_id)}",
+                    timeout=45,
+                )
+                if response is not None and response.status_code == 200:
+                    payment = response.json()
+                    if payment.get("status") == "paid":
+                        st.success(
+                            "Payment verified. The subscription should now "
+                            "be active and paid."
                         )
-                    except requests.RequestException as exc:
-                        st.error(f"Request failed: {exc}")
                     else:
-                        show_response(res)
-
-                        if res.status_code == 200:
-                            st.success(
-                                "Payment verified. The payment should now be paid "
-                                "and the subscription should be active."
-                            )
+                        st.warning(
+                            "Payment was retrieved but is not paid yet."
+                        )
 
             if st.button(
                 "5. Refresh My Subscriptions",
-                key="tap_flow_refresh_subscriptions",
+                key="moyasar_flow_refresh_subscriptions",
                 use_container_width=True,
             ):
-                try:
-                    res = requests.get(
-                        f"{API_BASE}/subscriptions/my",
-                        headers=headers(),
-                        timeout=30,
-                    )
-                except requests.RequestException as exc:
-                    st.error(f"Request failed: {exc}")
-                else:
-                    show_response(res)
+                api_request("GET", "/subscriptions/my")
 
     # ------------------------------------------------------------
-    # CREATE TAP CHECKOUT
+    # CREATE CHECKOUT
     # ------------------------------------------------------------
     with checkout_tab:
-        st.subheader("Create Tap Checkout")
+        st.subheader("POST /payments/create-checkout")
+        st.caption(
+            "Creates or reuses a local pending payment and returns the "
+            "Moyasar frontend configuration."
+        )
 
         subscription_id = st.number_input(
             "Subscription ID",
             min_value=1,
-            value=int(st.session_state.get("tap_subscription_id", 1)),
-            key="tap_checkout_subscription_id",
+            value=int(
+                st.session_state.get("moyasar_subscription_id", 1) or 1
+            ),
+            key="moyasar_checkout_subscription_id",
         )
 
         if st.button(
-            "Create Tap Checkout",
-            key="tap_create_checkout",
+            "Create Checkout",
+            key="moyasar_create_checkout",
             use_container_width=True,
         ):
-            try:
-                res = requests.post(
-                    f"{API_BASE}/payments/create-checkout",
-                    json={"subscription_id": int(subscription_id)},
-                    headers=headers(),
+            response = api_request(
+                "POST",
+                "/payments/create-checkout",
+                json={"subscription_id": int(subscription_id)},
+                timeout=45,
+            )
+
+            if response is not None and response.status_code == 200:
+                data = response.json()
+                st.session_state.moyasar_subscription_id = int(
+                    subscription_id
+                )
+                st.session_state.moyasar_payment_id = data.get(
+                    "payment_id"
+                )
+                st.session_state.moyasar_checkout_config = data
+                st.success("Checkout configuration saved in session.")
+                st.code(
+                    json.dumps(data, indent=2),
+                    language="json",
+                )
+
+    # ------------------------------------------------------------
+    # ATTACH MOYASAR PAYMENT ID
+    # ------------------------------------------------------------
+    with attach_tab:
+        st.subheader("POST /payments/attach-moyasar-payment")
+        st.caption(
+            "Call this after the Moyasar frontend form creates a payment. "
+            "Use the local payment ID from create-checkout and the UUID "
+            "returned by Moyasar."
+        )
+
+        local_payment_id = st.number_input(
+            "Local Payment ID",
+            min_value=1,
+            value=int(
+                st.session_state.get("moyasar_payment_id") or 1
+            ),
+            key="moyasar_attach_local_id",
+        )
+        moyasar_payment_id = st.text_input(
+            "Moyasar Payment UUID",
+            value=st.session_state.get(
+                "moyasar_provider_payment_id", ""
+            ),
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            key="moyasar_attach_provider_id",
+        )
+
+        if st.button(
+            "Attach Payment",
+            key="moyasar_attach_btn",
+            use_container_width=True,
+        ):
+            if not moyasar_payment_id.strip():
+                st.error("Moyasar payment UUID is required.")
+            else:
+                response = api_request(
+                    "POST",
+                    "/payments/attach-moyasar-payment",
+                    json={
+                        "local_payment_id": int(local_payment_id),
+                        "moyasar_payment_id": (
+                            moyasar_payment_id.strip()
+                        ),
+                    },
                     timeout=45,
                 )
-            except requests.RequestException as exc:
-                st.error(f"Request failed: {exc}")
-            else:
-                show_response(res)
-
-                if res.status_code == 200:
-                    data = res.json()
-                    checkout_url = data.get("checkout_url")
-                    tap_charge_id = data.get("tap_charge_id")
-
-                    st.session_state.tap_subscription_id = int(subscription_id)
-                    st.session_state.tap_checkout_url = checkout_url
-                    st.session_state.tap_charge_id = tap_charge_id
-                    st.session_state.tap_payment_id = data.get("payment_id")
-
-                    st.success("Tap checkout created successfully.")
-
-                    if checkout_url:
-                        st.link_button(
-                            "Open Tap Secure Checkout",
-                            checkout_url,
-                            use_container_width=True,
-                        )
-
-                    if tap_charge_id:
-                        st.code(tap_charge_id, language=None)
+                if response is not None and response.status_code == 200:
+                    st.session_state.moyasar_payment_id = int(
+                        local_payment_id
+                    )
+                    st.session_state.moyasar_provider_payment_id = (
+                        moyasar_payment_id.strip()
+                    )
 
     # ------------------------------------------------------------
-    # VERIFY TAP CHARGE
+    # VERIFY PAYMENT
     # ------------------------------------------------------------
     with verify_tab:
-        st.subheader("Verify Tap Charge")
-
-        st.write(
-            "After Tap redirects the customer, copy the `tap_id` query parameter "
-            "from the success-page URL and paste it below."
+        st.subheader("GET /payments/verify/{payment_id}")
+        st.caption(
+            "The path parameter is your local database payment ID, not "
+            "the Moyasar UUID."
         )
 
-        charge_id = st.text_input(
-            "Tap Charge ID",
-            value=st.session_state.get("tap_charge_id", ""),
-            placeholder="chg_TS...",
-            key="tap_verify_charge_id",
+        local_payment_id = st.number_input(
+            "Local Payment ID to Verify",
+            min_value=1,
+            value=int(
+                st.session_state.get("moyasar_payment_id") or 1
+            ),
+            key="moyasar_verify_local_id",
         )
 
         if st.button(
-            "Verify Payment",
-            key="tap_verify_payment",
+            "Verify with Moyasar",
+            key="moyasar_verify_btn",
             use_container_width=True,
         ):
-            if not charge_id.strip():
-                st.error("Tap Charge ID is required.")
-            else:
-                try:
-                    res = requests.get(
-                        f"{API_BASE}/payments/verify-charge/{charge_id.strip()}",
-                        headers=headers(),
-                        timeout=45,
-                    )
-                except requests.RequestException as exc:
-                    st.error(f"Request failed: {exc}")
-                else:
-                    show_response(res)
+            api_request(
+                "GET",
+                f"/payments/verify/{int(local_payment_id)}",
+                timeout=45,
+            )
 
-                    if res.status_code == 200:
-                        st.success("Tap payment is captured and verified.")
+    # ------------------------------------------------------------
+    # PLAN CHANGE CHECKOUT
+    # ------------------------------------------------------------
+    with plan_change_tab:
+        st.subheader(
+            "POST /payments/create-plan-change-checkout"
+        )
+        st.caption(
+            "Creates a local Moyasar payment for a plan upgrade that is "
+            "awaiting payment."
+        )
 
+        plan_change_id = st.number_input(
+            "Plan Change ID",
+            min_value=1,
+            value=int(
+                st.session_state.get(
+                    "moyasar_plan_change_id", 1
+                )
+                or 1
+            ),
+            key="moyasar_plan_change_id_input",
+        )
 
+        if st.button(
+            "Create Plan Change Checkout",
+            key="moyasar_plan_change_checkout_btn",
+            use_container_width=True,
+        ):
+            response = api_request(
+                "POST",
+                "/payments/create-plan-change-checkout",
+                json={"plan_change_id": int(plan_change_id)},
+                timeout=45,
+            )
+            if response is not None and response.status_code == 200:
+                data = response.json()
+                st.session_state.moyasar_plan_change_id = int(
+                    plan_change_id
+                )
+                st.session_state.moyasar_plan_change_payment_id = (
+                    data.get("payment_id")
+                )
+                st.session_state.moyasar_payment_id = data.get(
+                    "payment_id"
+                )
+                st.session_state.moyasar_checkout_config = data
+                st.success(
+                    "Plan-change checkout configuration created."
+                )
+                st.json(data)
+
+    # ------------------------------------------------------------
+    # MY PAYMENTS
+    # ------------------------------------------------------------
     with payments_tab:
-        st.subheader("My Payments")
+        st.subheader("GET /payments/my")
 
         if st.button(
             "Get My Payments",
-            key="tap_get_my_payments",
+            key="moyasar_get_my_payments",
             use_container_width=True,
         ):
-            try:
-                res = requests.get(
-                    f"{API_BASE}/payments/my",
-                    headers=headers(),
-                    timeout=30,
-                )
-            except requests.RequestException as exc:
-                st.error(f"Request failed: {exc}")
-            else:
-                show_response(res)
+            response = api_request("GET", "/payments/my")
 
-                if res.status_code == 200:
-                    payments = res.json()
+            if response is not None and response.status_code == 200:
+                payments = response.json()
 
-                    if isinstance(payments, list) and payments:
-                        rows = [
-                            {
-                                "id": payment.get("id"),
-                                "subscription_id": payment.get("subscription_id"),
-                                "provider": payment.get("provider"),
-                                "status": payment.get("status"),
-                                "amount": payment.get("amount"),
-                                "currency": payment.get("currency"),
-                                "tap_charge_id": payment.get("tap_charge_id"),
-                                "paid_at": payment.get("paid_at"),
-                                "created_at": payment.get("created_at"),
-                            }
-                            for payment in payments
-                        ]
-                        st.dataframe(rows, use_container_width=True)
-                    elif isinstance(payments, list):
-                        st.info("No payments found.")
+                if isinstance(payments, list) and payments:
+                    rows = [
+                        {
+                            "id": payment.get("id"),
+                            "subscription_id": payment.get(
+                                "subscription_id"
+                            ),
+                            "plan_change_id": payment.get(
+                                "plan_change_id"
+                            ),
+                            "provider": payment.get("provider"),
+                            "status": payment.get("status"),
+                            "amount": payment.get("amount"),
+                            "currency": payment.get("currency"),
+                            "provider_payment_id": payment.get(
+                                "provider_payment_id"
+                            ),
+                            "provider_reference": payment.get(
+                                "provider_reference"
+                            ),
+                            "paid_at": payment.get("paid_at"),
+                            "created_at": payment.get("created_at"),
+                        }
+                        for payment in payments
+                    ]
+                    st.dataframe(
+                        rows,
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                elif isinstance(payments, list):
+                    st.info("No payments found.")
 
+    # ------------------------------------------------------------
+    # ADMIN PAYMENTS
+    # ------------------------------------------------------------
     with admin_tab:
-        st.subheader("Admin Payment List")
+        st.subheader("GET /payments/")
         st.caption(
-            "Requires admin, super_admin, or finance_manager authentication."
+            "Requires admin, super_admin, or finance_manager."
         )
 
         status_filter = st.selectbox(
             "Payment Status",
-            ["", "pending", "paid", "failed", "cancelled"],
-            key="tap_admin_status",
+            [
+                "",
+                "pending",
+                "paid",
+                "failed",
+                "cancelled",
+                "refunded",
+            ],
+            key="moyasar_admin_status",
         )
         user_id_filter = st.number_input(
             "User ID (0 means all)",
             min_value=0,
             value=0,
-            key="tap_admin_user_id",
+            key="moyasar_admin_user_id",
         )
         page = st.number_input(
             "Page",
             min_value=1,
             value=1,
-            key="tap_admin_page",
+            key="moyasar_admin_page",
         )
         limit = st.number_input(
             "Limit",
             min_value=1,
             max_value=100,
             value=10,
-            key="tap_admin_limit",
+            key="moyasar_admin_limit",
         )
 
         if st.button(
             "List Payments",
-            key="tap_admin_list_payments",
+            key="moyasar_admin_list_payments",
             use_container_width=True,
         ):
             params = {
                 "page": int(page),
                 "limit": int(limit),
             }
-
             if status_filter:
                 params["status"] = status_filter
-
             if user_id_filter > 0:
                 params["user_id"] = int(user_id_filter)
 
-            try:
-                res = requests.get(
-                    f"{API_BASE}/payments/",
-                    params=params,
-                    headers=headers(),
-                    timeout=30,
-                )
-            except requests.RequestException as exc:
-                st.error(f"Request failed: {exc}")
-            else:
-                show_response(res)
+            api_request(
+                "GET",
+                "/payments/",
+                params=params,
+            )
+
+    # ------------------------------------------------------------
+    # WEBHOOK NOTES
+    # ------------------------------------------------------------
+    with webhook_tab:
+        st.subheader("POST /payments/webhook/moyasar")
+        st.info(
+            "Do not normally call the webhook manually from this tester. "
+            "Moyasar should call it from its servers after you register the "
+            "HTTPS URL in the Moyasar dashboard."
+        )
+
+        st.code(
+            f"{API_BASE}/payments/webhook/moyasar",
+            language=None,
+        )
+
+        st.write("Expected processing flow:")
+        st.code(
+            """Moyasar event
+-> verify secret_token
+-> retrieve payment from Moyasar API
+-> validate amount, currency and metadata
+-> mark local payment paid/failed/refunded
+-> activate subscription or complete plan change""",
+            language=None,
+        )
+
+        with st.expander("Optional manual webhook request"):
+            st.warning(
+                "This only works when you enter the same webhook secret "
+                "configured in your backend and when the payment UUID "
+                "exists in Moyasar."
+            )
+
+            webhook_secret = st.text_input(
+                "Webhook Secret",
+                type="password",
+                key="moyasar_manual_webhook_secret",
+            )
+            event_type = st.selectbox(
+                "Event Type",
+                ["payment_paid", "payment_failed"],
+                key="moyasar_manual_event_type",
+            )
+            webhook_payment_id = st.text_input(
+                "Moyasar Payment UUID",
+                value=st.session_state.get(
+                    "moyasar_provider_payment_id", ""
+                ),
+                key="moyasar_manual_webhook_payment_id",
+            )
+
+            if st.button(
+                "Send Manual Webhook",
+                key="moyasar_manual_webhook_btn",
+            ):
+                if not webhook_secret:
+                    st.error("Webhook secret is required.")
+                elif not webhook_payment_id.strip():
+                    st.error("Moyasar payment UUID is required.")
+                else:
+                    api_request(
+                        "POST",
+                        "/payments/webhook/moyasar",
+                        json={
+                            "type": event_type,
+                            "secret_token": webhook_secret,
+                            "data": {
+                                "id": webhook_payment_id.strip(),
+                                "metadata": {
+                                    "local_payment_id": str(
+                                        st.session_state.get(
+                                            "moyasar_payment_id"
+                                        )
+                                        or ""
+                                    )
+                                },
+                            },
+                        },
+                        timeout=45,
+                    )
