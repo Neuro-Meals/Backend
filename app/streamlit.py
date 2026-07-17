@@ -1,6 +1,484 @@
 import json
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
+import json
+import streamlit.components.v1 as components
+
+def render_moyasar_form(
+    checkout: dict,
+    api_base_url: str,
+    access_token: str,
+) -> None:
+    """
+    Render the Moyasar payment form inside Streamlit.
+
+    Required checkout fields:
+      payment_id
+      amount
+      currency
+      description
+      publishable_api_key
+      callback_url
+
+    Optional checkout fields:
+      metadata
+      supported_networks
+      methods
+    """
+
+    required_fields = [
+        "payment_id",
+        "amount",
+        "currency",
+        "description",
+        "publishable_api_key",
+        "callback_url",
+    ]
+
+    missing_fields = [
+        field for field in required_fields if checkout.get(field) in (None, "")
+    ]
+
+    if missing_fields:
+        raise ValueError(
+            "Missing required checkout fields: "
+            + ", ".join(missing_fields)
+        )
+
+    payment_id = int(checkout["payment_id"])
+
+    # Safely encode Python values for JavaScript.
+    amount_js = json.dumps(int(checkout["amount"]))
+    currency_js = json.dumps(str(checkout["currency"]))
+    description_js = json.dumps(str(checkout["description"]))
+    publishable_key_js = json.dumps(
+        str(checkout["publishable_api_key"])
+    )
+    callback_url_js = json.dumps(str(checkout["callback_url"]))
+
+    networks_js = json.dumps(
+        checkout.get(
+            "supported_networks",
+            ["mada", "visa", "mastercard"],
+        )
+    )
+
+    methods_js = json.dumps(
+        checkout.get(
+            "methods",
+            ["creditcard"],
+        )
+    )
+
+    metadata_js = json.dumps(
+        checkout.get(
+            "metadata",
+            {},
+        )
+    )
+
+    api_base_url_js = json.dumps(api_base_url.rstrip("/"))
+    access_token_js = json.dumps(access_token)
+    local_payment_id_js = json.dumps(payment_id)
+
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0"
+        />
+
+        <link
+            rel="stylesheet"
+            href="https://cdn.moyasar.com/mpf/1.15.0/moyasar.css"
+        />
+
+        <style>
+            * {{
+                box-sizing: border-box;
+            }}
+
+            body {{
+                margin: 0;
+                padding: 16px;
+                font-family: Arial, sans-serif;
+                background: white;
+                color: #111827;
+            }}
+
+            .payment-container {{
+                width: 100%;
+                max-width: 620px;
+                margin: 0 auto;
+            }}
+
+            .payment-title {{
+                margin: 0 0 8px 0;
+                font-size: 20px;
+                font-weight: 700;
+            }}
+
+            .payment-description {{
+                margin: 0 0 16px 0;
+                color: #4b5563;
+                font-size: 14px;
+                line-height: 1.5;
+            }}
+
+            .payment-reference {{
+                margin-bottom: 16px;
+                padding: 10px 12px;
+                border-radius: 8px;
+                background: #f8fafc;
+                border: 1px solid #dbe3ec;
+                font-size: 13px;
+            }}
+
+            #payment-status {{
+                margin-top: 16px;
+                padding: 14px;
+                border-radius: 8px;
+                display: none;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                font-size: 14px;
+                line-height: 1.5;
+            }}
+
+            .status-info {{
+                display: block !important;
+                background: #eef6ff;
+                border: 1px solid #8abfff;
+                color: #123a63;
+            }}
+
+            .status-success {{
+                display: block !important;
+                background: #edfff2;
+                border: 1px solid #64c77a;
+                color: #155724;
+            }}
+
+            .status-error {{
+                display: block !important;
+                background: #fff0f0;
+                border: 1px solid #e27c7c;
+                color: #7f1d1d;
+            }}
+        </style>
+    </head>
+
+    <body>
+        <div class="payment-container">
+            <h2 class="payment-title">
+                Moyasar Sandbox Payment
+            </h2>
+
+            <p class="payment-description">
+                After Moyasar creates the payment, this form will
+                automatically attach the Moyasar payment UUID to your
+                local backend payment record.
+            </p>
+
+            <div class="payment-reference">
+                Local payment ID:
+                <strong>{payment_id}</strong>
+            </div>
+
+            <div class="mysr-form"></div>
+
+            <div id="payment-status"></div>
+        </div>
+
+        <script
+            src="https://polyfill.io/v3/polyfill.min.js?features=fetch"
+        ></script>
+
+        <script
+            src="https://cdn.moyasar.com/mpf/1.15.0/moyasar.js"
+        ></script>
+
+        <script>
+            const apiBaseUrl = {api_base_url_js};
+            const accessToken = {access_token_js};
+            const localPaymentId = {local_payment_id_js};
+
+            const statusBox =
+                document.getElementById("payment-status");
+
+            function showStatus(message, type = "info") {{
+                statusBox.className = "status-" + type;
+                statusBox.textContent = message;
+            }}
+
+            function formatError(value) {{
+                if (value === null || value === undefined) {{
+                    return "Unknown error";
+                }}
+
+                if (typeof value === "string") {{
+                    return value;
+                }}
+
+                try {{
+                    return JSON.stringify(value, null, 2);
+                }} catch (error) {{
+                    return String(value);
+                }}
+            }}
+
+            async function attachMoyasarPayment(payment) {{
+                if (!payment || !payment.id) {{
+                    throw new Error(
+                        "Moyasar did not return a payment UUID."
+                    );
+                }}
+
+                const moyasarPaymentId = payment.id;
+
+                sessionStorage.setItem(
+                    "moyasar_payment_id",
+                    moyasarPaymentId
+                );
+
+                sessionStorage.setItem(
+                    "local_payment_id",
+                    String(localPaymentId)
+                );
+
+                showStatus(
+                    "Moyasar payment created successfully.\\n\\n" +
+                    "Moyasar payment UUID:\\n" +
+                    moyasarPaymentId +
+                    "\\n\\n" +
+                    "Local payment ID:\\n" +
+                    localPaymentId +
+                    "\\n\\n" +
+                    "Attaching the payment to the backend...",
+                    "info"
+                );
+
+                console.log(
+                    "Full Moyasar payment response:",
+                    payment
+                );
+
+                console.log(
+                    "Moyasar payment UUID:",
+                    moyasarPaymentId
+                );
+
+                console.log(
+                    "Local payment ID:",
+                    localPaymentId
+                );
+
+                const endpoint =
+                    apiBaseUrl +
+                    "/payments/attach-moyasar-payment";
+
+                let response;
+
+                try {{
+                    response = await fetch(
+                        endpoint,
+                        {{
+                            method: "POST",
+                            headers: {{
+                                "Content-Type": "application/json",
+                                "Accept": "application/json",
+                                "Authorization":
+                                    "Bearer " + accessToken
+                            }},
+                            body: JSON.stringify({{
+                                local_payment_id: localPaymentId,
+                                moyasar_payment_id:
+                                    moyasarPaymentId
+                            }})
+                        }}
+                    );
+                }} catch (networkError) {{
+                    throw new Error(
+                        "Could not connect to the backend. " +
+                        formatError(networkError)
+                    );
+                }}
+
+                const responseText = await response.text();
+
+                console.log(
+                    "Attach endpoint status:",
+                    response.status
+                );
+
+                console.log(
+                    "Attach endpoint response:",
+                    responseText
+                );
+
+                let responseData = null;
+
+                if (responseText) {{
+                    try {{
+                        responseData = JSON.parse(responseText);
+                    }} catch (jsonError) {{
+                        responseData = {{
+                            detail: responseText
+                        }};
+                    }}
+                }}
+
+                if (!response.ok) {{
+                    const backendDetail =
+                        responseData &&
+                        responseData.detail !== undefined
+                            ? responseData.detail
+                            : responseData ||
+                              responseText ||
+                              "Unknown backend error";
+
+                    throw new Error(
+                        "HTTP " +
+                        response.status +
+                        " " +
+                        response.statusText +
+                        "\\n\\n" +
+                        formatError(backendDetail)
+                    );
+                }}
+
+                return responseData || {{}};
+            }}
+
+            try {{
+                Moyasar.init({{
+                    element: ".mysr-form",
+                    amount: {amount_js},
+                    currency: {currency_js},
+                    description: {description_js},
+                    publishable_api_key: {publishable_key_js},
+                    callback_url: {callback_url_js},
+                    supported_networks: {networks_js},
+                    methods: {methods_js},
+                    metadata: {metadata_js},
+
+                    on_completed: async function(payment) {{
+                        const moyasarPaymentId =
+                            payment && payment.id
+                                ? payment.id
+                                : "Not returned";
+
+                        console.log(
+                            "Moyasar on_completed payment:",
+                            payment
+                        );
+
+                        showStatus(
+                            "Moyasar payment created.\\n\\n" +
+                            "Moyasar payment UUID:\\n" +
+                            moyasarPaymentId +
+                            "\\n\\n" +
+                            "Local payment ID:\\n" +
+                            localPaymentId +
+                            "\\n\\n" +
+                            "Attaching it to the backend...",
+                            "info"
+                        );
+
+                        try {{
+                            const attachResponse =
+                                await attachMoyasarPayment(
+                                    payment
+                                );
+
+                            console.log(
+                                "Backend attach response:",
+                                attachResponse
+                            );
+
+                            showStatus(
+                                "Payment attached successfully.\\n\\n" +
+                                "Local payment ID:\\n" +
+                                localPaymentId +
+                                "\\n\\n" +
+                                "Moyasar payment UUID:\\n" +
+                                moyasarPaymentId +
+                                "\\n\\n" +
+                                "Backend response:\\n" +
+                                formatError(attachResponse) +
+                                "\\n\\n" +
+                                "Complete 3-D Secure if Moyasar " +
+                                "redirects you.",
+                                "success"
+                            );
+                        }} catch (error) {{
+                            console.error(
+                                "Backend attach failed:",
+                                error
+                            );
+
+                            showStatus(
+                                "Moyasar created the payment, but " +
+                                "the backend attach request failed." +
+                                "\\n\\n" +
+                                "Moyasar payment UUID:\\n" +
+                                moyasarPaymentId +
+                                "\\n\\n" +
+                                "Local payment ID:\\n" +
+                                localPaymentId +
+                                "\\n\\n" +
+                                "Backend error:\\n" +
+                                formatError(
+                                    error &&
+                                    error.message
+                                        ? error.message
+                                        : error
+                                ),
+                                "error"
+                            );
+                        }}
+                    }},
+
+                    on_failure: function(error) {{
+                        console.error(
+                            "Moyasar payment failed:",
+                            error
+                        );
+
+                        showStatus(
+                            "Moyasar payment failed.\\n\\n" +
+                            formatError(error),
+                            "error"
+                        );
+                    }}
+                }});
+            }} catch (initializationError) {{
+                console.error(
+                    "Could not initialize Moyasar:",
+                    initializationError
+                );
+
+                showStatus(
+                    "Could not initialize the Moyasar form.\\n\\n" +
+                    formatError(initializationError),
+                    "error"
+                );
+            }}
+        </script>
+    </body>
+    </html>
+    """
+
+    components.html(
+        html,
+        height=820,
+        scrolling=True,
+    )
 
 API_BASE = "https://app.nutriomeals.com"
 
@@ -25,6 +503,9 @@ if "moyasar_provider_payment_id" not in st.session_state:
 
 if "moyasar_checkout_config" not in st.session_state:
     st.session_state.moyasar_checkout_config = {}
+
+if "moyasar_checkout" not in st.session_state:
+    st.session_state.moyasar_checkout = {}
 
 if "moyasar_plan_change_id" not in st.session_state:
     st.session_state.moyasar_plan_change_id = 1
@@ -3940,6 +4421,22 @@ elif menu == "Payments":
                     language="javascript",
                 )
 
+                if st.session_state.token:
+                    st.divider()
+                    st.write("### Embedded Moyasar Test Form")
+                    st.caption(
+                        "This form runs inside Streamlit. After Moyasar creates "
+                        "the payment, it automatically calls "
+                        "/payments/attach-moyasar-payment."
+                    )
+                    render_moyasar_form(
+                        checkout=config,
+                        api_base_url=API_BASE,
+                        access_token=st.session_state.token,
+                    )
+                else:
+                    st.warning("Login first to render the payment form.")
+
         with right:
             st.write("### Attach and Verify")
 
@@ -4026,8 +4523,8 @@ elif menu == "Payments":
     with checkout_tab:
         st.subheader("POST /payments/create-checkout")
         st.caption(
-            "Creates or reuses a local pending payment and returns the "
-            "Moyasar frontend configuration."
+            "Creates or reuses a local pending payment, saves the configuration "
+            "in Streamlit session state, and renders the Moyasar card form."
         )
 
         subscription_id = st.number_input(
@@ -4044,27 +4541,100 @@ elif menu == "Payments":
             key="moyasar_create_checkout",
             use_container_width=True,
         ):
-            response = api_request(
-                "POST",
-                "/payments/create-checkout",
-                json={"subscription_id": int(subscription_id)},
-                timeout=45,
+            if not st.session_state.token:
+                st.error("Login first before creating a checkout.")
+            else:
+                response = api_request(
+                    "POST",
+                    "/payments/create-checkout",
+                    json={"subscription_id": int(subscription_id)},
+                    timeout=45,
+                )
+
+                if response is not None and response.status_code == 200:
+                    checkout_data = response.json()
+
+                    st.session_state.moyasar_subscription_id = int(
+                        subscription_id
+                    )
+                    st.session_state.moyasar_payment_id = checkout_data.get(
+                        "payment_id"
+                    )
+                    st.session_state.moyasar_checkout = checkout_data
+                    st.session_state.moyasar_checkout_config = checkout_data
+
+                    st.success(
+                        "Local pending payment created successfully. "
+                        "The Moyasar form is ready below."
+                    )
+
+        checkout_data = (
+            st.session_state.get("moyasar_checkout")
+            or st.session_state.get("moyasar_checkout_config")
+            or {}
+        )
+
+        if checkout_data:
+            st.divider()
+            st.write("### Checkout Configuration")
+
+            summary = st.columns(4)
+            summary[0].metric(
+                "Local Payment ID",
+                checkout_data.get("payment_id", "N/A"),
+            )
+            summary[1].metric(
+                "Amount",
+                checkout_data.get("amount", "N/A"),
+            )
+            summary[2].metric(
+                "Currency",
+                checkout_data.get("currency", "N/A"),
+            )
+            summary[3].metric(
+                "Status",
+                checkout_data.get("status", "N/A"),
             )
 
-            if response is not None and response.status_code == 200:
-                data = response.json()
-                st.session_state.moyasar_subscription_id = int(
-                    subscription_id
+            with st.expander("Raw checkout response", expanded=False):
+                st.json(checkout_data)
+
+            if st.button(
+                "Clear Checkout Form",
+                key="moyasar_clear_checkout",
+                use_container_width=False,
+            ):
+                st.session_state.moyasar_checkout = {}
+                st.session_state.moyasar_checkout_config = {}
+                st.session_state.moyasar_payment_id = None
+                st.rerun()
+
+            if st.session_state.token:
+                st.divider()
+                st.subheader("Pay with Moyasar")
+                st.caption(
+                    "Use a Moyasar test card. The embedded form automatically "
+                    "attaches the returned Moyasar payment UUID to the local "
+                    "payment record."
                 )
-                st.session_state.moyasar_payment_id = data.get(
-                    "payment_id"
+
+                render_moyasar_form(
+                    checkout=checkout_data,
+                    api_base_url=API_BASE,
+                    access_token=st.session_state.token,
                 )
-                st.session_state.moyasar_checkout_config = data
-                st.success("Checkout configuration saved in session.")
-                st.code(
-                    json.dumps(data, indent=2),
-                    language="json",
+
+                st.info(
+                    "After completing the card flow, open the Verify Payment "
+                    "tab and verify the local payment ID shown above."
                 )
+            else:
+                st.warning("Login first to render the Moyasar form.")
+        else:
+            st.info(
+                "Enter a subscription ID and click Create Checkout to load "
+                "the embedded Moyasar payment form."
+            )
 
     # ------------------------------------------------------------
     # ATTACH MOYASAR PAYMENT ID
