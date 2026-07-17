@@ -1,17 +1,27 @@
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
+from typing import Any
 
-from sqlalchemy import DateTime, Float, Integer, String
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 
 
 class PaymentProvider(str, Enum):
-    TAP = "tap"          # temporarily keep for old records
     MOYASAR = "moyasar"
 
-    # Keep temporarily if old Stripe records exist.
+    # Keep these only when old records still exist.
+    TAP = "tap"
     STRIPE = "stripe"
 
 
@@ -20,6 +30,7 @@ class PaymentRecordStatus(str, Enum):
     PAID = "paid"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    REFUNDED = "refunded"
 
 
 class Payment(Base):
@@ -32,27 +43,31 @@ class Payment(Base):
     )
 
     user_id: Mapped[int] = mapped_column(
-        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
     subscription_id: Mapped[int] = mapped_column(
-        Integer,
+        ForeignKey("subscriptions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    
+
     plan_change_id: Mapped[int | None] = mapped_column(
-    Integer,
-    nullable=True,
-    index=True,
+        ForeignKey(
+            "subscription_plan_changes.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
     )
 
     provider: Mapped[str] = mapped_column(
         String(50),
         default=PaymentProvider.MOYASAR.value,
         nullable=False,
+        index=True,
     )
 
     status: Mapped[str] = mapped_column(
@@ -62,8 +77,8 @@ class Payment(Base):
         index=True,
     )
 
-    amount: Mapped[float] = mapped_column(
-        Float,
+    amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2),
         nullable=False,
     )
 
@@ -73,20 +88,15 @@ class Payment(Base):
         nullable=False,
     )
 
-    # Tap identifiers
-    provider_charge_id: Mapped[str | None] = mapped_column(
+    # Moyasar payment UUID.
+    provider_payment_id: Mapped[str | None] = mapped_column(
         String(255),
         unique=True,
         index=True,
         nullable=True,
     )
 
-    provider_payment_reference: Mapped[str | None] = mapped_column(
-        String(255),
-        nullable=True,
-    )
-
-    provider_gateway_reference: Mapped[str | None] = mapped_column(
+    provider_reference: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
     )
@@ -97,28 +107,23 @@ class Payment(Base):
     )
 
     provider_response_message: Mapped[str | None] = mapped_column(
-        String(500),
+        Text,
         nullable=True,
     )
 
-    checkout_url: Mapped[str | None] = mapped_column(
+    # Stores the verified response returned by Moyasar.
+    provider_payload: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
+    callback_url: Mapped[str | None] = mapped_column(
         String(1500),
         nullable=True,
     )
 
     paid_at: Mapped[datetime | None] = mapped_column(
         DateTime,
-        nullable=True,
-    )
-
-    # Keep these temporarily so old Stripe data is not destroyed.
-    stripe_checkout_session_id: Mapped[str | None] = mapped_column(
-        String(255),
-        nullable=True,
-    )
-
-    stripe_payment_intent_id: Mapped[str | None] = mapped_column(
-        String(255),
         nullable=True,
     )
 

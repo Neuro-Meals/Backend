@@ -1,6 +1,8 @@
 from datetime import datetime
+from decimal import Decimal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.payments.models import (
     PaymentProvider,
@@ -16,11 +18,30 @@ class CreatePlanChangeCheckoutRequest(BaseModel):
     plan_change_id: int
 
 
+class AttachMoyasarPaymentRequest(BaseModel):
+    local_payment_id: int
+    moyasar_payment_id: str = Field(
+        min_length=10,
+        max_length=255,
+    )
+
+
 class CheckoutResponse(BaseModel):
     payment_id: int
-    checkout_url: str
-    tap_charge_id: str
-    status: str
+
+    # Amount in halalas: 250 SAR = 25000.
+    amount: int
+    currency: str
+    description: str
+
+    publishable_api_key: str
+    callback_url: str
+
+    metadata: dict[str, str]
+    supported_networks: list[str]
+    methods: list[str]
+
+    status: PaymentRecordStatus
 
 
 class PaymentResponse(BaseModel):
@@ -32,20 +53,26 @@ class PaymentResponse(BaseModel):
     provider: PaymentProvider
     status: PaymentRecordStatus
 
-    amount: float
+    amount: Decimal
     currency: str
 
-    checkout_url: str | None = None
+    provider_payment_id: str | None = None
+    provider_reference: str | None = None
+    provider_response_code: str | None = None
+    provider_response_message: str | None = None
+    provider_payload: dict[str, Any] | None = None
 
-    tap_charge_id: str | None = None
-    tap_payment_reference: str | None = None
-    tap_gateway_reference: str | None = None
-    tap_response_code: str | None = None
-    tap_response_message: str | None = None
-
+    callback_url: str | None = None
     paid_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-    
+
+
+class MoyasarWebhookResponse(BaseModel):
+    received: bool
+    payment_id: int | None = None
+    provider_payment_id: str | None = None
+    status: str | None = None
+    message: str | None = None
