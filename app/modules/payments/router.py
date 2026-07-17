@@ -368,10 +368,7 @@ def find_payment_from_charge(
 
     return None
 
-@router.post(
-    "/create-checkout",
-    response_model=CheckoutResponse,
-)
+@router.post("/create-checkout")
 def create_checkout(
     payload: CreateCheckoutRequest,
     db: Session = Depends(get_db),
@@ -398,149 +395,236 @@ def create_checkout(
             detail="Subscription already paid",
         )
 
-    # Prevent several pending checkout records for the same subscription.
     existing_payment = (
         db.query(Payment)
         .filter(
             Payment.subscription_id == subscription.id,
             Payment.user_id == current_user.id,
-            Payment.provider == PaymentProvider.TAP.value,
+            Payment.provider == PaymentProvider.MOYASAR.value,
             Payment.status == PaymentRecordStatus.PENDING.value,
         )
         .order_by(Payment.id.desc())
         .first()
     )
 
-    if existing_payment and existing_payment.checkout_url:
-        return CheckoutResponse(
-            payment_id=existing_payment.id,
-            checkout_url=existing_payment.checkout_url,
-            tap_charge_id=existing_payment.tap_charge_id or "",
-            status=existing_payment.status,
+    if existing_payment:
+        payment = existing_payment
+    else:
+        payment = Payment(
+            user_id=current_user.id,
+            subscription_id=subscription.id,
+            provider=PaymentProvider.MOYASAR.value,
+            status=PaymentRecordStatus.PENDING.value,
+            amount=float(subscription.amount),
+            currency=settings.PAYMENT_CURRENCY.upper(),
         )
 
-    payment = Payment(
-        user_id=current_user.id,
-        subscription_id=subscription.id,
-        provider=PaymentProvider.TAP.value,
-        status=PaymentRecordStatus.PENDING.value,
-        amount=float(subscription.amount),
-        currency=settings.PAYMENT_CURRENCY.upper(),
-    )
-
-    db.add(payment)
-    db.commit()
-    db.refresh(payment)
-
-    country_code, phone_number = split_phone_number(current_user.phone)
-
-    tap_payload = {
-        "amount": round(float(subscription.amount), 2),
-        "currency": settings.PAYMENT_CURRENCY.upper(),
-        "customer_initiated": True,
-        "threeDSecure": True,
-        "save_card": False,
-        "description": (
-            f"NutrioMeals subscription #{subscription.id}"
-        ),
-        "statement_descriptor": "NutrioMeals",
-        "metadata": {
-            "payment_id": str(payment.id),
-            "subscription_id": str(subscription.id),
-            "user_id": str(current_user.id),
-        },
-        "reference": {
-            "transaction": f"payment_{payment.id}",
-            "order": f"subscription_{subscription.id}",
-            "idempotent": f"tap_payment_{payment.id}",
-        },
-        "receipt": {
-            "email": True,
-            "sms": False,
-        },
-        "customer": {
-            "first_name": current_user.first_name,
-            "last_name": current_user.last_name,
-            "email": current_user.email,
-            "phone": {
-                "country_code": country_code,
-                "number": phone_number,
-            },
-        },
-        "merchant": {
-            "id": settings.TAP_MERCHANT_ID,
-        },
-        # Shows all payment methods enabled by Tap for this merchant.
-        "source": {
-            "id": "src_all",
-        },
-        "post": {
-            "url": settings.TAP_WEBHOOK_URL,
-        },
-        "redirect": {
-            "url": settings.FRONTEND_SUCCESS_URL,
-        },
-    }
-
-    try:
-        charge = create_tap_charge(tap_payload)
-
-        charge_id = charge.get("id")
-        tap_status = str(charge.get("status", "")).upper()
-        transaction = charge.get("transaction") or {}
-        checkout_url = transaction.get("url")
-
-        if not charge_id:
-            raise HTTPException(
-                status_code=502,
-                detail="Tap did not return a charge ID",
-            )
-
-        if not checkout_url and tap_status != TAP_SUCCESS_STATUS:
-            raise HTTPException(
-                status_code=502,
-                detail={
-                    "message": "Tap did not return a checkout URL",
-                    "tap_response": charge,
-                },
-            )
-
-        payment.tap_charge_id = charge_id
-        payment.checkout_url = checkout_url
-
-        update_payment_from_tap_charge(
-            db=db,
-            payment=payment,
-            subscription=subscription,
-            charge=charge,
-        )
-
+        db.add(payment)
         db.commit()
         db.refresh(payment)
 
-        return CheckoutResponse(
-            payment_id=payment.id,
-            checkout_url=checkout_url or settings.FRONTEND_SUCCESS_URL,
-            tap_charge_id=charge_id,
-            status=payment.status,
-        )
+    amount_halalas = int(
+        Decimal(str(payment.amount)) * Decimal("100")
+    )
 
-    except HTTPException:
-        payment.status = PaymentRecordStatus.FAILED.value
-        db.commit()
-        raise
+    return {
+        "payment_id": payment.id,
+        "amount": amount_halalas,
+        "currency": payment.currency,
+        "description": (
+            f"NutrioMeals subscription #{subscription.id}"
+        ),
+        "publishable_api_key": settings.MOYASAR_PUBLISHABLE_KEY,
+        "callback_url": settings.MOYASAR_CALLBACK_URL,
+        "metadata": {
+            "local_payment_id": str(payment.id),
+            "subscription_id": str(subscription.id),
+            "user_id": str(current_user.id),
+        },
+        "supported_networks": [
+            "mada",
+            "visa",
+            "mastercard",
+        ],
+        "methods": ["creditcard"],
+    }
 
-    except Exception as exc:
-        payment.status = PaymentRecordStatus.FAILED.value
-        payment.tap_response_message = str(exc)
-
-        db.commit()
-
+def moyasar_auth() -> tuple[str, str]:
+    if not settings.MOYASAR_SECRET_KEY:
         raise HTTPException(
             status_code=500,
-            detail="Could not create Tap checkout",
+            detail="Moyasar secret key is not configured",
         )
 
+    return settings.MOYASAR_SECRET_KEY, ""
+
+
+def retrieve_moyasar_payment(
+    moyasar_payment_id: str,
+) -> dict[str, Any]:
+    url = (
+        f"{settings.MOYASAR_API_URL.rstrip('/')}"
+        f"/payments/{moyasar_payment_id}"
+    )
+
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(
+                url,
+                auth=moyasar_auth(),
+                headers={"Accept": "application/json"},
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not connect to Moyasar: {exc}",
+        )
+
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "Could not retrieve Moyasar payment",
+                "status_code": response.status_code,
+                "response": response.text,
+            },
+        )
+
+    return response.json()
+
+@router.get(
+    "/verify/{moyasar_payment_id}",
+    response_model=PaymentResponse,
+)
+def verify_moyasar_payment(
+    moyasar_payment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    remote_payment = retrieve_moyasar_payment(
+        moyasar_payment_id
+    )
+
+    metadata = remote_payment.get("metadata") or {}
+    local_payment_id = metadata.get("local_payment_id")
+
+    if not local_payment_id or not str(local_payment_id).isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="Local payment ID is missing",
+        )
+
+    payment = (
+        db.query(Payment)
+        .filter(
+            Payment.id == int(local_payment_id),
+            Payment.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not payment:
+        raise HTTPException(
+            status_code=404,
+            detail="Payment not found",
+        )
+
+    subscription = (
+        db.query(Subscription)
+        .filter(
+            Subscription.id == payment.subscription_id,
+            Subscription.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found",
+        )
+
+    expected_amount = int(
+        Decimal(str(payment.amount)) * Decimal("100")
+    )
+
+    if int(remote_payment.get("amount", 0)) != expected_amount:
+        raise HTTPException(
+            status_code=400,
+            detail="Moyasar payment amount does not match",
+        )
+
+    if (
+        str(remote_payment.get("currency", "")).upper()
+        != payment.currency.upper()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Moyasar payment currency does not match",
+        )
+
+    payment.provider_payment_id = remote_payment.get("id")
+    payment.provider_payload = remote_payment
+
+    status = str(
+        remote_payment.get("status", "")
+    ).lower()
+
+    if status == "paid":
+        payment.status = PaymentRecordStatus.PAID.value
+
+        if not payment.paid_at:
+            payment.paid_at = datetime.utcnow()
+
+        if payment.plan_change_id:
+            complete_upgrade_plan_change(
+                db=db,
+                payment=payment,
+            )
+        else:
+            activate_paid_subscription(
+                db=db,
+                subscription=subscription,
+            )
+
+    elif status == "failed":
+        payment.status = PaymentRecordStatus.FAILED.value
+
+    else:
+        payment.status = PaymentRecordStatus.PENDING.value
+
+    db.commit()
+    db.refresh(payment)
+
+    if payment.status != PaymentRecordStatus.PAID.value:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Payment is not completed",
+                "moyasar_status": status,
+            },
+        )
+
+    return payment
+
+def activate_paid_subscription(
+    db: Session,
+    subscription: Subscription,
+) -> None:
+    subscription.payment_status = PaymentStatus.PAID
+    subscription.status = SubscriptionStatus.ACTIVE
+
+    if not subscription.start_date:
+        duration_days = get_plan_duration_days(
+            db=db,
+            subscription=subscription,
+        )
+
+        subscription.start_date = datetime.utcnow()
+        subscription.end_date = (
+            subscription.start_date
+            + timedelta(days=duration_days)
+        )
 
 @router.get(
     "/verify-charge/{charge_id}",

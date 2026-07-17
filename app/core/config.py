@@ -26,10 +26,19 @@ class Settings(BaseSettings):
     # FRONTEND_SUCCESS_URL: str = "https://nutriomeals.com/payment-success"
     # FRONTEND_CANCEL_URL: str = "https://nutriomeals.com/payment-cancel"
     
-    TAP_API_URL: str = "https://api.tap.company/v2"
-    TAP_MERCHANT_ID: str = ""
-    TAP_SECRET_KEY: str = ""
-    TAP_PUBLIC_KEY: str = ""
+    # TAP_API_URL: str = "https://api.tap.company/v2"
+    # TAP_MERCHANT_ID: str = ""
+    # TAP_SECRET_KEY: str = ""
+    # TAP_PUBLIC_KEY: str = ""
+    
+    
+    MOYASAR_PUBLISHABLE_KEY: str
+    MOYASAR_SECRET_KEY: str
+    MOYASAR_API_URL: str = "https://api.moyasar.com/v1"
+    MOYASAR_CALLBACK_URL: str
+    MOYASAR_WEBHOOK_SECRET: str
+    MOYASAR_WEBHOOK_URL: str
+    PAYMENT_CURRENCY: str = "SAR"
 
     PAYMENT_CURRENCY: str = "SAR"
     

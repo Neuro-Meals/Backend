@@ -8,7 +8,8 @@ from app.db.database import Base
 
 
 class PaymentProvider(str, Enum):
-    TAP = "tap"
+    TAP = "tap"          # temporarily keep for old records
+    MOYASAR = "moyasar"
 
     # Keep temporarily if old Stripe records exist.
     STRIPE = "stripe"
@@ -50,7 +51,7 @@ class Payment(Base):
 
     provider: Mapped[str] = mapped_column(
         String(50),
-        default=PaymentProvider.TAP.value,
+        default=PaymentProvider.MOYASAR.value,
         nullable=False,
     )
 
@@ -73,29 +74,29 @@ class Payment(Base):
     )
 
     # Tap identifiers
-    tap_charge_id: Mapped[str | None] = mapped_column(
+    provider_charge_id: Mapped[str | None] = mapped_column(
         String(255),
         unique=True,
         index=True,
         nullable=True,
     )
 
-    tap_payment_reference: Mapped[str | None] = mapped_column(
+    provider_payment_reference: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
     )
 
-    tap_gateway_reference: Mapped[str | None] = mapped_column(
+    provider_gateway_reference: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
     )
 
-    tap_response_code: Mapped[str | None] = mapped_column(
+    provider_response_code: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
     )
 
-    tap_response_message: Mapped[str | None] = mapped_column(
+    provider_response_message: Mapped[str | None] = mapped_column(
         String(500),
         nullable=True,
     )
