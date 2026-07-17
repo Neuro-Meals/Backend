@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import hmac
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -18,11 +17,12 @@ from app.modules.payments.models import (
     PaymentProvider,
     PaymentRecordStatus,
 )
-
 from app.modules.payments.schemas import (
+    AttachMoyasarPaymentRequest,
     CheckoutResponse,
     CreateCheckoutRequest,
     CreatePlanChangeCheckoutRequest,
+    MoyasarWebhookResponse,
     PaymentResponse,
 )
 from app.modules.plans.models import MealPlan
@@ -39,151 +39,127 @@ from app.modules.users.models import User, UserRole
 router = APIRouter(prefix="/payments", tags=["Payments"])
 
 
-TAP_SUCCESS_STATUS = "CAPTURED"
-
-TAP_PENDING_STATUSES = {
-    "INITIATED",
-    "IN_PROGRESS",
-    "PENDING",
-}
-
-TAP_CANCELLED_STATUSES = {
-    "CANCELLED",
-    "ABANDONED",
-}
-
-TAP_FAILED_STATUSES = {
-    "FAILED",
-    "DECLINED",
-    "RESTRICTED",
-    "VOID",
-    "TIMEDOUT",
-    "UNKNOWN",
-}
+# ---------------------------------------------------------------------------
+# Configuration and shared helpers
+# ---------------------------------------------------------------------------
 
 
-def tap_headers() -> dict[str, str]:
-    if not settings.TAP_SECRET_KEY:
+def require_moyasar_configuration() -> None:
+    missing: list[str] = []
+
+    if not getattr(settings, "MOYASAR_PUBLISHABLE_KEY", None):
+        missing.append("MOYASAR_PUBLISHABLE_KEY")
+
+    if not getattr(settings, "MOYASAR_SECRET_KEY", None):
+        missing.append("MOYASAR_SECRET_KEY")
+
+    if not getattr(settings, "MOYASAR_API_URL", None):
+        missing.append("MOYASAR_API_URL")
+
+    if not getattr(settings, "MOYASAR_CALLBACK_URL", None):
+        missing.append("MOYASAR_CALLBACK_URL")
+
+    if missing:
         raise HTTPException(
             status_code=500,
-            detail="Tap secret key is not configured",
+            detail=f"Missing Moyasar configuration: {', '.join(missing)}",
         )
 
-    return {
-        "Authorization": f"Bearer {settings.TAP_SECRET_KEY}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "lang_code": "en",
-    }
+
+def amount_to_smallest_unit(
+    amount: Decimal | float | int | str,
+) -> int:
+    """Convert SAR to halalas. Example: 250 SAR -> 25000."""
+    decimal_amount = Decimal(str(amount))
+
+    return int(
+        (decimal_amount * Decimal("100")).quantize(
+            Decimal("1"),
+            rounding=ROUND_HALF_UP,
+        )
+    )
 
 
-def extract_tap_error(response: httpx.Response) -> str:
+def moyasar_auth() -> tuple[str, str]:
+    secret_key = getattr(settings, "MOYASAR_SECRET_KEY", None)
+
+    if not secret_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Moyasar secret key is not configured",
+        )
+
+    # Moyasar uses HTTP Basic authentication: secret key as username,
+    # and an empty password.
+    return secret_key, ""
+
+
+def extract_moyasar_error(response: httpx.Response) -> str:
     try:
-        data = response.json()
-
-        errors = data.get("errors")
-        if isinstance(errors, list) and errors:
-            first_error = errors[0]
-
-            if isinstance(first_error, dict):
-                return (
-                    first_error.get("description")
-                    or first_error.get("message")
-                    or str(first_error)
-                )
-
-        return (
-            data.get("message")
-            or data.get("description")
-            or str(data)
-        )
-
+        payload = response.json()
     except Exception:
-        return response.text or "Unknown Tap error"
+        return response.text or "Unknown Moyasar error"
+
+    if isinstance(payload, dict):
+        message = payload.get("message") or payload.get("error")
+        if message:
+            return str(message)
+
+        errors = payload.get("errors")
+        if errors:
+            return str(errors)
+
+    return str(payload)
 
 
-def create_tap_charge(payload: dict[str, Any]) -> dict[str, Any]:
-    url = f"{settings.TAP_API_URL.rstrip('/')}/charges/"
+def retrieve_moyasar_payment(
+    moyasar_payment_id: str,
+) -> dict[str, Any]:
+    require_moyasar_configuration()
 
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.post(
-                url,
-                headers=tap_headers(),
-                json=payload,
-            )
-
-    except httpx.RequestError as exc:
+    payment_id = str(moyasar_payment_id).strip()
+    if not payment_id:
         raise HTTPException(
-            status_code=502,
-            detail=f"Could not connect to Tap: {exc}",
+            status_code=400,
+            detail="Moyasar payment ID is required",
         )
 
-    if response.status_code not in {200, 201}:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": "Tap rejected the charge request",
-                "tap_status_code": response.status_code,
-                "tap_error": extract_tap_error(response),
-            },
-        )
-
-    return response.json()
-
-
-def retrieve_tap_charge(charge_id: str) -> dict[str, Any]:
-    url = f"{settings.TAP_API_URL.rstrip('/')}/charges/{charge_id}"
+    url = (
+        f"{settings.MOYASAR_API_URL.rstrip('/')}"
+        f"/payments/{payment_id}"
+    )
 
     try:
         with httpx.Client(timeout=30.0) as client:
             response = client.get(
                 url,
-                headers=tap_headers(),
+                auth=moyasar_auth(),
+                headers={"Accept": "application/json"},
             )
-
     except httpx.RequestError as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Could not connect to Tap: {exc}",
-        )
+            detail=f"Could not connect to Moyasar: {exc}",
+        ) from exc
 
     if response.status_code != 200:
         raise HTTPException(
             status_code=502,
             detail={
-                "message": "Could not retrieve Tap charge",
-                "tap_status_code": response.status_code,
-                "tap_error": extract_tap_error(response),
+                "message": "Could not retrieve Moyasar payment",
+                "moyasar_status_code": response.status_code,
+                "moyasar_error": extract_moyasar_error(response),
             },
         )
 
-    return response.json()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=502,
+            detail="Moyasar returned an invalid payment response",
+        )
 
-
-def split_phone_number(phone: str | None) -> tuple[str, str]:
-    """
-    Tap expects:
-        country_code: "966"
-        number: "5XXXXXXXX"
-
-    Examples:
-        +966512345678 -> ("966", "512345678")
-        966512345678  -> ("966", "512345678")
-    """
-    digits = "".join(character for character in (phone or "") if character.isdigit())
-
-    if digits.startswith("966") and len(digits) > 3:
-        return "966", digits[3:]
-
-    if digits.startswith("0") and len(digits) > 1:
-        return "966", digits[1:]
-
-    if digits:
-        return "966", digits
-
-    # Tap requires either phone or email; email is already supplied.
-    return "966", "500000000"
+    return payload
 
 
 def get_plan_duration_days(
@@ -201,411 +177,6 @@ def get_plan_duration_days(
 
     return 30
 
-
-def update_payment_from_tap_charge(
-    db: Session,
-    payment: Payment,
-    subscription: Subscription,
-    charge: dict[str, Any],
-) -> None:
-    tap_status = str(charge.get("status", "")).upper()
-
-    references = charge.get("reference") or {}
-    response_data = charge.get("response") or {}
-
-    payment.tap_charge_id = charge.get("id") or payment.tap_charge_id
-    payment.tap_payment_reference = references.get("payment")
-    payment.tap_gateway_reference = references.get("gateway")
-    payment.tap_response_code = response_data.get("code")
-    payment.tap_response_message = response_data.get("message")
-
-    if tap_status == TAP_SUCCESS_STATUS:
-        payment.status = PaymentRecordStatus.PAID.value
-
-        if not payment.paid_at:
-            payment.paid_at = datetime.utcnow()
-
-        if payment.plan_change_id:
-            complete_upgrade_plan_change(
-            db=db,
-            payment=payment,
-        )
-        else:
-            subscription.payment_status = PaymentStatus.PAID
-            subscription.status = SubscriptionStatus.ACTIVE
-
-            if not subscription.start_date:
-                duration_days = get_plan_duration_days(
-                db,
-                subscription,
-            )
-
-            subscription.start_date = datetime.utcnow()
-            subscription.end_date = (
-                subscription.start_date
-                + timedelta(days=duration_days)
-            )
-
-    elif tap_status in TAP_CANCELLED_STATUSES:
-        payment.status = PaymentRecordStatus.CANCELLED.value
-
-    elif tap_status in TAP_FAILED_STATUSES:
-        payment.status = PaymentRecordStatus.FAILED.value
-
-    else:
-        payment.status = PaymentRecordStatus.PENDING.value
-
-
-def currency_decimal_places(currency: str) -> int:
-    three_decimal_currencies = {
-        "BHD",
-        "JOD",
-        "KWD",
-        "OMR",
-    }
-
-    return 3 if currency.upper() in three_decimal_currencies else 2
-
-
-def format_tap_amount(amount: Any, currency: str) -> str:
-    decimal_places = currency_decimal_places(currency)
-
-    quantizer = (
-        Decimal("0.001")
-        if decimal_places == 3
-        else Decimal("0.01")
-    )
-
-    rounded = Decimal(str(amount)).quantize(
-        quantizer,
-        rounding=ROUND_HALF_UP,
-    )
-
-    return f"{rounded:.{decimal_places}f}"
-
-
-def validate_tap_hashstring(
-    payload: dict[str, Any],
-    received_hashstring: str | None,
-) -> bool:
-    if not received_hashstring:
-        return False
-
-    reference = payload.get("reference") or {}
-    transaction = payload.get("transaction") or {}
-
-    charge_id = payload.get("id", "")
-    amount = format_tap_amount(
-        payload.get("amount", 0),
-        payload.get("currency", "SAR"),
-    )
-    currency = payload.get("currency", "")
-    gateway_reference = reference.get("gateway", "")
-    payment_reference = reference.get("payment", "")
-    status = payload.get("status", "")
-    created = transaction.get("created", "")
-
-    value_to_hash = (
-        f"x_id{charge_id}"
-        f"x_amount{amount}"
-        f"x_currency{currency}"
-        f"x_gateway_reference{gateway_reference}"
-        f"x_payment_reference{payment_reference}"
-        f"x_status{status}"
-        f"x_created{created}"
-    )
-
-    calculated_hash = hmac.new(
-        settings.TAP_SECRET_KEY.encode("utf-8"),
-        value_to_hash.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-    return hmac.compare_digest(
-        calculated_hash.lower(),
-        received_hashstring.lower(),
-    )
-
-
-def find_payment_from_charge(
-    db: Session,
-    charge: dict[str, Any],
-) -> Payment | None:
-    charge_id = charge.get("id")
-
-    if charge_id:
-        payment = (
-            db.query(Payment)
-            .filter(Payment.tap_charge_id == charge_id)
-            .first()
-        )
-
-        if payment:
-            return payment
-
-    metadata = charge.get("metadata") or {}
-    payment_id = metadata.get("payment_id")
-
-    if payment_id and str(payment_id).isdigit():
-        return (
-            db.query(Payment)
-            .filter(Payment.id == int(payment_id))
-            .first()
-        )
-
-    reference = charge.get("reference") or {}
-    transaction_reference = reference.get("transaction", "")
-
-    if transaction_reference.startswith("payment_"):
-        possible_id = transaction_reference.removeprefix("payment_")
-
-        if possible_id.isdigit():
-            return (
-                db.query(Payment)
-                .filter(Payment.id == int(possible_id))
-                .first()
-            )
-
-    return None
-
-@router.post("/create-checkout")
-def create_checkout(
-    payload: CreateCheckoutRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    subscription = (
-        db.query(Subscription)
-        .filter(
-            Subscription.id == payload.subscription_id,
-            Subscription.user_id == current_user.id,
-        )
-        .first()
-    )
-
-    if not subscription:
-        raise HTTPException(
-            status_code=404,
-            detail="Subscription not found",
-        )
-
-    if subscription.payment_status == PaymentStatus.PAID:
-        raise HTTPException(
-            status_code=400,
-            detail="Subscription already paid",
-        )
-
-    existing_payment = (
-        db.query(Payment)
-        .filter(
-            Payment.subscription_id == subscription.id,
-            Payment.user_id == current_user.id,
-            Payment.provider == PaymentProvider.MOYASAR.value,
-            Payment.status == PaymentRecordStatus.PENDING.value,
-        )
-        .order_by(Payment.id.desc())
-        .first()
-    )
-
-    if existing_payment:
-        payment = existing_payment
-    else:
-        payment = Payment(
-            user_id=current_user.id,
-            subscription_id=subscription.id,
-            provider=PaymentProvider.MOYASAR.value,
-            status=PaymentRecordStatus.PENDING.value,
-            amount=float(subscription.amount),
-            currency=settings.PAYMENT_CURRENCY.upper(),
-        )
-
-        db.add(payment)
-        db.commit()
-        db.refresh(payment)
-
-    amount_halalas = int(
-        Decimal(str(payment.amount)) * Decimal("100")
-    )
-
-    return {
-        "payment_id": payment.id,
-        "amount": amount_halalas,
-        "currency": payment.currency,
-        "description": (
-            f"NutrioMeals subscription #{subscription.id}"
-        ),
-        "publishable_api_key": settings.MOYASAR_PUBLISHABLE_KEY,
-        "callback_url": settings.MOYASAR_CALLBACK_URL,
-        "metadata": {
-            "local_payment_id": str(payment.id),
-            "subscription_id": str(subscription.id),
-            "user_id": str(current_user.id),
-        },
-        "supported_networks": [
-            "mada",
-            "visa",
-            "mastercard",
-        ],
-        "methods": ["creditcard"],
-    }
-
-def moyasar_auth() -> tuple[str, str]:
-    if not settings.MOYASAR_SECRET_KEY:
-        raise HTTPException(
-            status_code=500,
-            detail="Moyasar secret key is not configured",
-        )
-
-    return settings.MOYASAR_SECRET_KEY, ""
-
-
-def retrieve_moyasar_payment(
-    moyasar_payment_id: str,
-) -> dict[str, Any]:
-    url = (
-        f"{settings.MOYASAR_API_URL.rstrip('/')}"
-        f"/payments/{moyasar_payment_id}"
-    )
-
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            response = client.get(
-                url,
-                auth=moyasar_auth(),
-                headers={"Accept": "application/json"},
-            )
-    except httpx.RequestError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not connect to Moyasar: {exc}",
-        )
-
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": "Could not retrieve Moyasar payment",
-                "status_code": response.status_code,
-                "response": response.text,
-            },
-        )
-
-    return response.json()
-
-@router.get(
-    "/verify/{moyasar_payment_id}",
-    response_model=PaymentResponse,
-)
-def verify_moyasar_payment(
-    moyasar_payment_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    remote_payment = retrieve_moyasar_payment(
-        moyasar_payment_id
-    )
-
-    metadata = remote_payment.get("metadata") or {}
-    local_payment_id = metadata.get("local_payment_id")
-
-    if not local_payment_id or not str(local_payment_id).isdigit():
-        raise HTTPException(
-            status_code=400,
-            detail="Local payment ID is missing",
-        )
-
-    payment = (
-        db.query(Payment)
-        .filter(
-            Payment.id == int(local_payment_id),
-            Payment.user_id == current_user.id,
-        )
-        .first()
-    )
-
-    if not payment:
-        raise HTTPException(
-            status_code=404,
-            detail="Payment not found",
-        )
-
-    subscription = (
-        db.query(Subscription)
-        .filter(
-            Subscription.id == payment.subscription_id,
-            Subscription.user_id == current_user.id,
-        )
-        .first()
-    )
-
-    if not subscription:
-        raise HTTPException(
-            status_code=404,
-            detail="Subscription not found",
-        )
-
-    expected_amount = int(
-        Decimal(str(payment.amount)) * Decimal("100")
-    )
-
-    if int(remote_payment.get("amount", 0)) != expected_amount:
-        raise HTTPException(
-            status_code=400,
-            detail="Moyasar payment amount does not match",
-        )
-
-    if (
-        str(remote_payment.get("currency", "")).upper()
-        != payment.currency.upper()
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Moyasar payment currency does not match",
-        )
-
-    payment.provider_payment_id = remote_payment.get("id")
-    payment.provider_payload = remote_payment
-
-    status = str(
-        remote_payment.get("status", "")
-    ).lower()
-
-    if status == "paid":
-        payment.status = PaymentRecordStatus.PAID.value
-
-        if not payment.paid_at:
-            payment.paid_at = datetime.utcnow()
-
-        if payment.plan_change_id:
-            complete_upgrade_plan_change(
-                db=db,
-                payment=payment,
-            )
-        else:
-            activate_paid_subscription(
-                db=db,
-                subscription=subscription,
-            )
-
-    elif status == "failed":
-        payment.status = PaymentRecordStatus.FAILED.value
-
-    else:
-        payment.status = PaymentRecordStatus.PENDING.value
-
-    db.commit()
-    db.refresh(payment)
-
-    if payment.status != PaymentRecordStatus.PAID.value:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Payment is not completed",
-                "moyasar_status": status,
-            },
-        )
-
-    return payment
 
 def activate_paid_subscription(
     db: Session,
@@ -626,34 +197,271 @@ def activate_paid_subscription(
             + timedelta(days=duration_days)
         )
 
-@router.get(
-    "/verify-charge/{charge_id}",
-    response_model=PaymentResponse,
-)
-def verify_tap_charge(
-    charge_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    payment = (
-        db.query(Payment)
+
+def complete_upgrade_plan_change(
+    db: Session,
+    payment: Payment,
+) -> None:
+    if not payment.plan_change_id:
+        return
+
+    plan_change = (
+        db.query(SubscriptionPlanChange)
         .filter(
-            Payment.tap_charge_id == charge_id,
-            Payment.user_id == current_user.id,
+            SubscriptionPlanChange.id == payment.plan_change_id
         )
         .first()
     )
 
-    if not payment:
+    if not plan_change:
         raise HTTPException(
             status_code=404,
-            detail="Payment not found",
+            detail="Plan change not found",
         )
+
+    if plan_change.status == PlanChangeStatus.COMPLETED.value:
+        return
 
     subscription = (
         db.query(Subscription)
         .filter(
-            Subscription.id == payment.subscription_id,
+            Subscription.id == plan_change.subscription_id
+        )
+        .first()
+    )
+
+    new_plan = (
+        db.query(MealPlan)
+        .filter(MealPlan.id == plan_change.new_plan_id)
+        .first()
+    )
+
+    if not subscription or not new_plan:
+        plan_change.status = PlanChangeStatus.FAILED.value
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription or new meal plan not found",
+        )
+
+    subscription.plan_id = new_plan.id
+    subscription.amount = new_plan.price
+    subscription.pending_plan_id = None
+    subscription.plan_change_effective_at = None
+
+    plan_change.status = PlanChangeStatus.COMPLETED.value
+    plan_change.completed_at = datetime.utcnow()
+
+
+def validate_remote_payment(
+    payment: Payment,
+    remote_payment: dict[str, Any],
+) -> None:
+    remote_payment_id = str(remote_payment.get("id") or "")
+
+    if not remote_payment_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Moyasar response does not contain a payment ID",
+        )
+
+    if (
+        payment.provider_payment_id
+        and str(payment.provider_payment_id) != remote_payment_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Moyasar payment ID does not match",
+        )
+
+    remote_amount = int(remote_payment.get("amount") or 0)
+    expected_amount = amount_to_smallest_unit(payment.amount)
+
+    if remote_amount != expected_amount:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Moyasar payment amount does not match",
+                "expected": expected_amount,
+                "received": remote_amount,
+            },
+        )
+
+    remote_currency = str(
+        remote_payment.get("currency") or ""
+    ).upper()
+
+    if remote_currency != str(payment.currency).upper():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Moyasar payment currency does not match",
+                "expected": str(payment.currency).upper(),
+                "received": remote_currency,
+            },
+        )
+
+    metadata = remote_payment.get("metadata") or {}
+    metadata_payment_id = str(
+        metadata.get("local_payment_id") or ""
+    )
+
+    if metadata_payment_id != str(payment.id):
+        raise HTTPException(
+            status_code=400,
+            detail="Moyasar payment metadata does not match the local payment",
+        )
+
+    metadata_subscription_id = str(
+        metadata.get("subscription_id") or ""
+    )
+
+    if (
+        metadata_subscription_id
+        and metadata_subscription_id != str(payment.subscription_id)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Moyasar subscription metadata does not match",
+        )
+
+    metadata_user_id = str(metadata.get("user_id") or "")
+
+    if metadata_user_id and metadata_user_id != str(payment.user_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Moyasar user metadata does not match",
+        )
+
+    metadata_plan_change_id = str(
+        metadata.get("plan_change_id") or ""
+    )
+
+    if payment.plan_change_id:
+        if metadata_plan_change_id != str(payment.plan_change_id):
+            raise HTTPException(
+                status_code=400,
+                detail="Moyasar plan-change metadata does not match",
+            )
+
+
+def process_moyasar_payment(
+    db: Session,
+    payment: Payment,
+    remote_payment: dict[str, Any],
+) -> None:
+    remote_payment_id = str(remote_payment.get("id") or "")
+    remote_status = str(
+        remote_payment.get("status") or ""
+    ).lower()
+
+    source = remote_payment.get("source") or {}
+
+    payment.provider_payment_id = remote_payment_id
+    payment.provider_payload = remote_payment
+    payment.provider_reference = (
+        source.get("gateway_id")
+        or source.get("reference_number")
+        or remote_payment.get("invoice_id")
+    )
+
+    response_code = source.get("code")
+    response_message = source.get("message")
+
+    payment.provider_response_code = (
+        str(response_code) if response_code is not None else None
+    )
+    payment.provider_response_message = (
+        str(response_message) if response_message is not None else None
+    )
+
+    if remote_status in {"paid", "captured"}:
+        payment.status = PaymentRecordStatus.PAID.value
+
+        if payment.paid_at is None:
+            payment.paid_at = datetime.utcnow()
+
+        if payment.plan_change_id:
+            complete_upgrade_plan_change(
+                db=db,
+                payment=payment,
+            )
+        else:
+            subscription = (
+                db.query(Subscription)
+                .filter(
+                    Subscription.id == payment.subscription_id,
+                    Subscription.user_id == payment.user_id,
+                )
+                .first()
+            )
+
+            if not subscription:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Subscription not found",
+                )
+
+            activate_paid_subscription(
+                db=db,
+                subscription=subscription,
+            )
+
+    elif remote_status == "failed":
+        payment.status = PaymentRecordStatus.FAILED.value
+
+    elif remote_status in {"voided", "cancelled", "canceled"}:
+        payment.status = PaymentRecordStatus.CANCELLED.value
+
+    elif remote_status == "refunded":
+        # This assumes REFUNDED exists in PaymentRecordStatus.
+        payment.status = PaymentRecordStatus.REFUNDED.value
+
+    else:
+        # initiated, authorized, verified, or another non-final state
+        payment.status = PaymentRecordStatus.PENDING.value
+
+
+def build_checkout_response(
+    payment: Payment,
+    description: str,
+    metadata: dict[str, str],
+) -> CheckoutResponse:
+    require_moyasar_configuration()
+
+    return CheckoutResponse(
+        payment_id=payment.id,
+        amount=amount_to_smallest_unit(payment.amount),
+        currency=str(payment.currency).upper(),
+        description=description,
+        publishable_api_key=settings.MOYASAR_PUBLISHABLE_KEY,
+        callback_url=settings.MOYASAR_CALLBACK_URL,
+        metadata=metadata,
+        supported_networks=["mada", "visa", "mastercard"],
+        methods=["creditcard"],
+        status=PaymentRecordStatus(payment.status),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Customer checkout endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/create-checkout",
+    response_model=CheckoutResponse,
+)
+def create_checkout(
+    payload: CreateCheckoutRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_moyasar_configuration()
+
+    subscription = (
+        db.query(Subscription)
+        .filter(
+            Subscription.id == payload.subscription_id,
             Subscription.user_id == current_user.id,
         )
         .first()
@@ -665,102 +473,96 @@ def verify_tap_charge(
             detail="Subscription not found",
         )
 
-    charge = retrieve_tap_charge(charge_id)
-
-    # Important server-side checks.
-    tap_amount = round(float(charge.get("amount", 0)), 2)
-    expected_amount = round(float(payment.amount), 2)
-
-    if tap_amount != expected_amount:
+    if subscription.payment_status == PaymentStatus.PAID:
         raise HTTPException(
             status_code=400,
-            detail="Tap payment amount does not match",
+            detail="Subscription is already paid",
         )
 
-    if str(charge.get("currency", "")).upper() != payment.currency.upper():
-        raise HTTPException(
-            status_code=400,
-            detail="Tap payment currency does not match",
+    payment = (
+        db.query(Payment)
+        .filter(
+            Payment.subscription_id == subscription.id,
+            Payment.user_id == current_user.id,
+            Payment.plan_change_id.is_(None),
+            Payment.provider == PaymentProvider.MOYASAR.value,
+            Payment.status == PaymentRecordStatus.PENDING.value,
         )
-
-    merchant = charge.get("merchant") or {}
-    charge_merchant_id = str(
-        merchant.get("id")
-        or charge.get("merchant_id")
-        or ""
+        .order_by(Payment.id.desc())
+        .first()
     )
 
-    if (
-        charge_merchant_id
-        and charge_merchant_id != str(settings.TAP_MERCHANT_ID)
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Tap merchant does not match",
+    if payment is None:
+        payment = Payment(
+            user_id=current_user.id,
+            subscription_id=subscription.id,
+            plan_change_id=None,
+            provider=PaymentProvider.MOYASAR.value,
+            status=PaymentRecordStatus.PENDING.value,
+            amount=subscription.amount,
+            currency=settings.PAYMENT_CURRENCY.upper(),
+            callback_url=settings.MOYASAR_CALLBACK_URL,
         )
 
-    update_payment_from_tap_charge(
-        db=db,
+        db.add(payment)
+        db.commit()
+        db.refresh(payment)
+
+    return build_checkout_response(
         payment=payment,
-        subscription=subscription,
-        charge=charge,
+        description=f"NutrioMeals subscription #{subscription.id}",
+        metadata={
+            "local_payment_id": str(payment.id),
+            "subscription_id": str(subscription.id),
+            "user_id": str(current_user.id),
+            "payment_type": "subscription",
+        },
     )
 
-    db.commit()
-    db.refresh(payment)
 
-    if payment.status != PaymentRecordStatus.PAID.value:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": "Payment is not completed",
-                "tap_status": charge.get("status"),
-                "tap_response": (
-                    charge.get("response") or {}
-                ).get("message"),
-            },
-        )
-
-    return payment
-
-@router.post("/webhook/tap")
-async def tap_webhook(
-    request: Request,
-    hashstring: str | None = Header(
-        default=None,
-        alias="hashstring",
-    ),
+@router.post(
+    "/create-plan-change-checkout",
+    response_model=CheckoutResponse,
+)
+def create_plan_change_checkout(
+    payload: CreatePlanChangeCheckoutRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    try:
-        payload = await request.json()
+    require_moyasar_configuration()
 
-    except Exception:
+    plan_change = (
+        db.query(SubscriptionPlanChange)
+        .filter(
+            SubscriptionPlanChange.id == payload.plan_change_id,
+            SubscriptionPlanChange.user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not plan_change:
         raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON payload",
+            status_code=404,
+            detail="Plan change not found",
         )
 
-    if not validate_tap_hashstring(payload, hashstring):
+    if plan_change.status != PlanChangeStatus.PENDING_PAYMENT.value:
         raise HTTPException(
             status_code=400,
-            detail="Invalid Tap webhook hashstring",
+            detail="Plan change is not awaiting payment",
         )
 
-    payment = find_payment_from_charge(db, payload)
-
-    if not payment:
-        # Return 200 so Tap does not keep retrying an unknown old charge.
-        return {
-            "received": True,
-            "message": "Payment record not found",
-        }
+    if Decimal(str(plan_change.amount_difference)) <= Decimal("0"):
+        raise HTTPException(
+            status_code=400,
+            detail="Plan change does not require payment",
+        )
 
     subscription = (
         db.query(Subscription)
         .filter(
-            Subscription.id == payment.subscription_id,
-            Subscription.user_id == payment.user_id,
+            Subscription.id == plan_change.subscription_id,
+            Subscription.user_id == current_user.id,
         )
         .first()
     )
@@ -771,47 +573,276 @@ async def tap_webhook(
             detail="Subscription not found",
         )
 
-    # Retrieve directly from Tap instead of trusting the webhook body alone.
-    charge_id = payload.get("id")
+    payment = (
+        db.query(Payment)
+        .filter(
+            Payment.plan_change_id == plan_change.id,
+            Payment.user_id == current_user.id,
+            Payment.provider == PaymentProvider.MOYASAR.value,
+            Payment.status == PaymentRecordStatus.PENDING.value,
+        )
+        .order_by(Payment.id.desc())
+        .first()
+    )
 
-    if not charge_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Tap charge ID is missing",
+    if payment is None:
+        payment = Payment(
+            user_id=current_user.id,
+            subscription_id=subscription.id,
+            plan_change_id=plan_change.id,
+            provider=PaymentProvider.MOYASAR.value,
+            status=PaymentRecordStatus.PENDING.value,
+            amount=plan_change.amount_difference,
+            currency=settings.PAYMENT_CURRENCY.upper(),
+            callback_url=settings.MOYASAR_CALLBACK_URL,
         )
 
-    charge = retrieve_tap_charge(charge_id)
+        db.add(payment)
+        db.commit()
+        db.refresh(payment)
 
-    tap_amount = round(float(charge.get("amount", 0)), 2)
-    expected_amount = round(float(payment.amount), 2)
+    return build_checkout_response(
+        payment=payment,
+        description=f"NutrioMeals plan upgrade #{plan_change.id}",
+        metadata={
+            "local_payment_id": str(payment.id),
+            "subscription_id": str(subscription.id),
+            "plan_change_id": str(plan_change.id),
+            "user_id": str(current_user.id),
+            "payment_type": "plan_change",
+        },
+    )
 
-    if tap_amount != expected_amount:
+
+@router.post(
+    "/attach-moyasar-payment",
+    response_model=PaymentResponse,
+)
+def attach_moyasar_payment(
+    payload: AttachMoyasarPaymentRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    payment = (
+        db.query(Payment)
+        .filter(
+            Payment.id == payload.local_payment_id,
+            Payment.user_id == current_user.id,
+            Payment.provider == PaymentProvider.MOYASAR.value,
+        )
+        .first()
+    )
+
+    if not payment:
         raise HTTPException(
-            status_code=400,
-            detail="Tap webhook amount does not match",
+            status_code=404,
+            detail="Local payment not found",
         )
 
-    if str(charge.get("currency", "")).upper() != payment.currency.upper():
+    duplicate = (
+        db.query(Payment)
+        .filter(
+            Payment.provider_payment_id == payload.moyasar_payment_id,
+            Payment.id != payment.id,
+        )
+        .first()
+    )
+
+    if duplicate:
         raise HTTPException(
-            status_code=400,
-            detail="Tap webhook currency does not match",
+            status_code=409,
+            detail=(
+                "This Moyasar payment is already attached "
+                "to another local payment"
+            ),
         )
 
-    update_payment_from_tap_charge(
+    remote_payment = retrieve_moyasar_payment(
+        payload.moyasar_payment_id
+    )
+
+    validate_remote_payment(
+        payment=payment,
+        remote_payment=remote_payment,
+    )
+
+    payment.provider_payment_id = str(remote_payment["id"])
+    payment.provider_payload = remote_payment
+
+    # Process immediately in case the payment is already paid.
+    process_moyasar_payment(
         db=db,
         payment=payment,
-        subscription=subscription,
-        charge=charge,
+        remote_payment=remote_payment,
     )
 
     db.commit()
+    db.refresh(payment)
 
-    return {
-        "received": True,
-        "payment_id": payment.id,
-        "tap_charge_id": payment.tap_charge_id,
-        "status": payment.status,
-    }
+    return payment
+
+
+@router.get(
+    "/verify/{payment_id}",
+    response_model=PaymentResponse,
+)
+def verify_payment(
+    payment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    payment = (
+        db.query(Payment)
+        .filter(
+            Payment.id == payment_id,
+            Payment.user_id == current_user.id,
+            Payment.provider == PaymentProvider.MOYASAR.value,
+        )
+        .first()
+    )
+
+    if not payment:
+        raise HTTPException(
+            status_code=404,
+            detail="Payment not found",
+        )
+
+    if not payment.provider_payment_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Moyasar payment ID has not been attached",
+        )
+
+    remote_payment = retrieve_moyasar_payment(
+        payment.provider_payment_id
+    )
+
+    validate_remote_payment(
+        payment=payment,
+        remote_payment=remote_payment,
+    )
+
+    process_moyasar_payment(
+        db=db,
+        payment=payment,
+        remote_payment=remote_payment,
+    )
+
+    db.commit()
+    db.refresh(payment)
+
+    return payment
+
+
+# ---------------------------------------------------------------------------
+# Moyasar webhook
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/webhook/moyasar",
+    response_model=MoyasarWebhookResponse,
+)
+async def moyasar_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    try:
+        event = await request.json()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON payload",
+        ) from exc
+
+    received_secret = str(event.get("secret_token") or "")
+    expected_secret = str(
+        getattr(settings, "MOYASAR_WEBHOOK_SECRET", "") or ""
+    )
+
+    if not expected_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="Moyasar webhook secret is not configured",
+        )
+
+    if not hmac.compare_digest(received_secret, expected_secret):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Moyasar webhook secret",
+        )
+
+    event_type = str(event.get("type") or "")
+    event_data = event.get("data") or {}
+    moyasar_payment_id = str(event_data.get("id") or "")
+
+    if not moyasar_payment_id:
+        return MoyasarWebhookResponse(
+            received=True,
+            message="No Moyasar payment ID supplied",
+        )
+
+    payment = (
+        db.query(Payment)
+        .filter(
+            Payment.provider_payment_id == moyasar_payment_id
+        )
+        .first()
+    )
+
+    if payment is None:
+        metadata = event_data.get("metadata") or {}
+        local_payment_id = metadata.get("local_payment_id")
+
+        if local_payment_id and str(local_payment_id).isdigit():
+            payment = (
+                db.query(Payment)
+                .filter(Payment.id == int(local_payment_id))
+                .first()
+            )
+
+    if payment is None:
+        # Return HTTP 200 to acknowledge an old or unknown event.
+        return MoyasarWebhookResponse(
+            received=True,
+            provider_payment_id=moyasar_payment_id,
+            message="Local payment record not found",
+        )
+
+    remote_payment = retrieve_moyasar_payment(
+        moyasar_payment_id
+    )
+
+    if payment.provider_payment_id is None:
+        payment.provider_payment_id = moyasar_payment_id
+
+    validate_remote_payment(
+        payment=payment,
+        remote_payment=remote_payment,
+    )
+
+    process_moyasar_payment(
+        db=db,
+        payment=payment,
+        remote_payment=remote_payment,
+    )
+
+    db.commit()
+    db.refresh(payment)
+
+    return MoyasarWebhookResponse(
+        received=True,
+        payment_id=payment.id,
+        provider_payment_id=payment.provider_payment_id,
+        status=payment.status,
+        message=f"Processed {event_type}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Customer and admin reporting endpoints
+# ---------------------------------------------------------------------------
+
 
 @router.get(
     "/my",
@@ -840,7 +871,9 @@ def list_payments(
         )
     ),
     status: PaymentRecordStatus | None = Query(None),
+    provider: PaymentProvider | None = Query(None),
     user_id: int | None = Query(None),
+    subscription_id: int | None = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
 ):
@@ -849,8 +882,16 @@ def list_payments(
     if status:
         query = query.filter(Payment.status == status.value)
 
+    if provider:
+        query = query.filter(Payment.provider == provider.value)
+
     if user_id:
         query = query.filter(Payment.user_id == user_id)
+
+    if subscription_id:
+        query = query.filter(
+            Payment.subscription_id == subscription_id
+        )
 
     total = query.count()
 
@@ -861,7 +902,7 @@ def list_payments(
         .all()
     )
 
-    results = []
+    results: list[dict[str, Any]] = []
 
     for payment in payments:
         user = (
@@ -879,12 +920,20 @@ def list_payments(
         )
 
         plan = None
-
         if subscription:
             plan = (
                 db.query(MealPlan)
+                .filter(MealPlan.id == subscription.plan_id)
+                .first()
+            )
+
+        plan_change = None
+        if payment.plan_change_id:
+            plan_change = (
+                db.query(SubscriptionPlanChange)
                 .filter(
-                    MealPlan.id == subscription.plan_id
+                    SubscriptionPlanChange.id
+                    == payment.plan_change_id
                 )
                 .first()
             )
@@ -950,27 +999,41 @@ def list_payments(
                         else None
                     ),
                 },
+                "plan_change": {
+                    "id": plan_change.id,
+                    "status": (
+                        plan_change.status.value
+                        if hasattr(plan_change.status, "value")
+                        else plan_change.status
+                    ),
+                    "new_plan_id": plan_change.new_plan_id,
+                    "amount_difference": (
+                        plan_change.amount_difference
+                    ),
+                }
+                if plan_change
+                else None,
                 "payment": {
                     "provider": payment.provider,
                     "status": payment.status,
                     "amount": payment.amount,
                     "currency": payment.currency,
+                    "provider_payment_id": (
+                        payment.provider_payment_id
+                    ),
+                    "provider_reference": (
+                        payment.provider_reference
+                    ),
+                    "provider_response_code": (
+                        payment.provider_response_code
+                    ),
+                    "provider_response_message": (
+                        payment.provider_response_message
+                    ),
+                    "callback_url": payment.callback_url,
                     "paid_at": payment.paid_at,
                     "created_at": payment.created_at,
-                    "checkout_url": payment.checkout_url,
-                    "tap_charge_id": payment.tap_charge_id,
-                    "tap_payment_reference": (
-                        payment.tap_payment_reference
-                    ),
-                    "tap_gateway_reference": (
-                        payment.tap_gateway_reference
-                    ),
-                    "tap_response_code": (
-                        payment.tap_response_code
-                    ),
-                    "tap_response_message": (
-                        payment.tap_response_message
-                    ),
+                    "updated_at": payment.updated_at,
                 },
             }
         )
@@ -988,249 +1051,3 @@ def list_payments(
             ),
         },
     }
-    
-def complete_upgrade_plan_change(
-    db: Session,
-    payment: Payment,
-) -> None:
-    if not payment.plan_change_id:
-        return
-
-    plan_change = (
-        db.query(SubscriptionPlanChange)
-        .filter(
-            SubscriptionPlanChange.id
-            == payment.plan_change_id
-        )
-        .first()
-    )
-
-    if not plan_change:
-        return
-
-    if plan_change.status == PlanChangeStatus.COMPLETED.value:
-        return
-
-    subscription = (
-        db.query(Subscription)
-        .filter(
-            Subscription.id
-            == plan_change.subscription_id
-        )
-        .first()
-    )
-
-    new_plan = (
-        db.query(MealPlan)
-        .filter(
-            MealPlan.id == plan_change.new_plan_id
-        )
-        .first()
-    )
-
-    if not subscription or not new_plan:
-        plan_change.status = PlanChangeStatus.FAILED.value
-        return
-
-    subscription.plan_id = new_plan.id
-    subscription.amount = float(new_plan.price)
-    subscription.pending_plan_id = None
-    subscription.plan_change_effective_at = None
-
-    plan_change.status = PlanChangeStatus.COMPLETED.value
-    plan_change.completed_at = datetime.utcnow()
-    
-@router.post(
-    "/create-plan-change-checkout",
-    response_model=CheckoutResponse,
-)
-def create_plan_change_checkout(
-    payload: CreatePlanChangeCheckoutRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    plan_change = (
-        db.query(SubscriptionPlanChange)
-        .filter(
-            SubscriptionPlanChange.id
-            == payload.plan_change_id,
-            SubscriptionPlanChange.user_id
-            == current_user.id,
-        )
-        .first()
-    )
-
-    if not plan_change:
-        raise HTTPException(
-            status_code=404,
-            detail="Plan change not found",
-        )
-
-    if (
-        plan_change.status
-        != PlanChangeStatus.PENDING_PAYMENT.value
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="This plan change is not awaiting payment",
-        )
-
-    if plan_change.amount_difference <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="This plan change does not require payment",
-        )
-
-    subscription = (
-        db.query(Subscription)
-        .filter(
-            Subscription.id
-            == plan_change.subscription_id,
-            Subscription.user_id
-            == current_user.id,
-        )
-        .first()
-    )
-
-    if not subscription:
-        raise HTTPException(
-            status_code=404,
-            detail="Subscription not found",
-        )
-
-    existing_payment = (
-        db.query(Payment)
-        .filter(
-            Payment.plan_change_id == plan_change.id,
-            Payment.user_id == current_user.id,
-            Payment.status
-            == PaymentRecordStatus.PENDING.value,
-        )
-        .order_by(Payment.id.desc())
-        .first()
-    )
-
-    if existing_payment and existing_payment.checkout_url:
-        return CheckoutResponse(
-            payment_id=existing_payment.id,
-            checkout_url=existing_payment.checkout_url,
-            tap_charge_id=existing_payment.tap_charge_id or "",
-            status=existing_payment.status,
-        )
-
-    payment = Payment(
-        user_id=current_user.id,
-        subscription_id=subscription.id,
-        plan_change_id=plan_change.id,
-        provider=PaymentProvider.TAP.value,
-        status=PaymentRecordStatus.PENDING.value,
-        amount=float(plan_change.amount_difference),
-        currency=settings.PAYMENT_CURRENCY.upper(),
-    )
-
-    db.add(payment)
-    db.commit()
-    db.refresh(payment)
-
-    country_code, phone_number = split_phone_number(
-        current_user.phone
-    )
-
-    tap_payload = {
-        "amount": round(
-            float(plan_change.amount_difference),
-            2,
-        ),
-        "currency": settings.PAYMENT_CURRENCY.upper(),
-        "customer_initiated": True,
-        "threeDSecure": True,
-        "save_card": False,
-        "description": (
-            f"NutrioMeals plan upgrade #{plan_change.id}"
-        ),
-        "statement_descriptor": "NutrioMeals",
-        "metadata": {
-            "payment_id": str(payment.id),
-            "subscription_id": str(subscription.id),
-            "plan_change_id": str(plan_change.id),
-            "user_id": str(current_user.id),
-        },
-        "reference": {
-            "transaction": f"upgrade_payment_{payment.id}",
-            "order": f"plan_change_{plan_change.id}",
-            "idempotent": f"tap_upgrade_{payment.id}",
-        },
-        "receipt": {
-            "email": True,
-            "sms": False,
-        },
-        "customer": {
-            "first_name": current_user.first_name,
-            "last_name": current_user.last_name,
-            "email": current_user.email,
-            "phone": {
-                "country_code": country_code,
-                "number": phone_number,
-            },
-        },
-        "merchant": {
-            "id": settings.TAP_MERCHANT_ID,
-        },
-        "source": {
-            "id": "src_all",
-        },
-        "post": {
-            "url": settings.TAP_WEBHOOK_URL,
-        },
-        "redirect": {
-            "url": settings.FRONTEND_SUCCESS_URL,
-        },
-    }
-
-    try:
-        charge = create_tap_charge(tap_payload)
-
-        charge_id = charge.get("id")
-        transaction = charge.get("transaction") or {}
-        checkout_url = transaction.get("url")
-
-        if not charge_id:
-            raise HTTPException(
-                status_code=502,
-                detail="Tap did not return a charge ID",
-            )
-
-        if not checkout_url:
-            raise HTTPException(
-                status_code=502,
-                detail="Tap did not return a checkout URL",
-            )
-
-        payment.tap_charge_id = charge_id
-        payment.checkout_url = checkout_url
-
-        db.commit()
-        db.refresh(payment)
-
-        return CheckoutResponse(
-            payment_id=payment.id,
-            checkout_url=checkout_url,
-            tap_charge_id=charge_id,
-            status=payment.status,
-        )
-
-    except HTTPException:
-        payment.status = PaymentRecordStatus.FAILED.value
-        db.commit()
-        raise
-
-    except Exception as exc:
-        payment.status = PaymentRecordStatus.FAILED.value
-        payment.tap_response_message = str(exc)
-
-        db.commit()
-
-        raise HTTPException(
-            status_code=500,
-            detail="Could not create plan upgrade checkout",
-        )
