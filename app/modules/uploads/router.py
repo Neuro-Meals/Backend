@@ -9,7 +9,7 @@ from app.modules.users.models import User, UserRole
 
 router = APIRouter(prefix="/uploads", tags=["Uploads"])
 
-UPLOAD_DIR = Path("static/uploads")
+UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}

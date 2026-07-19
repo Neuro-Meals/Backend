@@ -210,17 +210,80 @@ def list_deliveries(
     }
 
 
-@router.get("/my", response_model=list[DeliveryResponse])
+@router.get("/my")
 def my_deliveries(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return (
+    deliveries = (
         db.query(Delivery)
         .filter(Delivery.user_id == current_user.id)
         .order_by(Delivery.id.desc())
         .all()
     )
+
+    result = []
+    for delivery in deliveries:
+        order = (
+            db.query(Order)
+            .filter(Order.id == delivery.order_id)
+            .first()
+        )
+
+        driver = None
+        if delivery.driver_id:
+            driver = (
+                db.query(User)
+                .filter(User.id == delivery.driver_id)
+                .first()
+            )
+
+        # Count meals from order items
+        meal_count = 0
+        if order and order.items:
+            items = order.items
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        meal_count += int(item.get("quantity", 1))
+            elif isinstance(items, dict) and "items" in items:
+                for item in items["items"]:
+                    if isinstance(item, dict):
+                        meal_count += int(item.get("quantity", 1))
+
+        result.append({
+            "id": delivery.id,
+            "order_id": delivery.order_id,
+            "user_id": delivery.user_id,
+            "driver_id": delivery.driver_id,
+            "status": enum_value(delivery.status),
+            "delivery_address": delivery.delivery_address,
+            "delivery_notes": delivery.delivery_notes,
+            "scheduled_at": delivery.scheduled_at,
+            "picked_up_at": delivery.picked_up_at,
+            "delivered_at": delivery.delivered_at,
+            "current_latitude": delivery.current_latitude,
+            "current_longitude": delivery.current_longitude,
+            "failure_reason": delivery.failure_reason,
+            "created_at": delivery.created_at,
+            "updated_at": delivery.updated_at,
+            "order": {
+                "id": order.id if order else None,
+                "order_number": order.order_number if order else None,
+                "status": enum_value(order.status) if order else None,
+                "total_amount": order.total_amount if order else None,
+                "delivery_date": order.delivery_date if order else None,
+                "items": order.items if order else None,
+            } if order else None,
+            "driver": {
+                "id": driver.id if driver else None,
+                "full_name": f"{driver.first_name} {driver.last_name}" if driver else None,
+                "phone": driver.phone if driver else None,
+            } if driver else None,
+            "meal_count": meal_count,
+        })
+
+    return result
 
 
 @router.get(

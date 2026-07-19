@@ -38,6 +38,7 @@ from app.modules.orders.automation_router import (
     router as order_automation_router,
 )
 
+from pathlib import Path
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -47,7 +48,10 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Serve static files using absolute path so it works regardless of CWD
+_static_dir = Path(__file__).resolve().parent.parent / "static"
+_static_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 # API_PREFIX = "/api/v1"
 

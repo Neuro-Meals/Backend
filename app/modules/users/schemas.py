@@ -53,6 +53,16 @@ class UserUpdateRole(BaseModel):
     role: UserRole
 
 
+class UserUpdate(BaseModel):
+    first_name: str | None = None
+    last_name: str | None = None
+    email: EmailStr | None = None
+    phone: str | None = None
+    location: str | None = None
+    address: str | None = None
+    is_active: bool | None = None
+
+
 class VerifyEmailOTP(BaseModel):
     email: EmailStr
     otp: str = Field(..., min_length=4, max_length=6)

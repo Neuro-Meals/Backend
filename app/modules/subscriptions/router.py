@@ -17,6 +17,10 @@ from app.modules.auth.dependencies import (
     get_current_user,
     require_roles,
 )
+from app.modules.payments.models import (
+    Payment,
+    PaymentRecordStatus,
+)
 from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import (
     PaymentStatus,
@@ -946,21 +950,39 @@ def change_subscription_plan(
                 ]
             ),
         )
+        .order_by(SubscriptionPlanChange.id.desc())
         .first()
     )
 
+    # Auto-cancel any previous pending/scheduled plan change so the
+    # user can request a new one without hitting a stale block.
     if existing_change:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "message": (
-                    "This subscription already has a pending "
-                    "or scheduled plan change"
-                ),
-                "plan_change_id": existing_change.id,
-                "status": existing_change.status,
-            },
+        existing_change.status = PlanChangeStatus.CANCELLED.value
+        existing_change.cancelled_at = datetime.utcnow()
+
+        # Clear the subscription's pending plan fields if they
+        # belonged to the change we just cancelled.
+        if (
+            subscription.pending_plan_id
+            == existing_change.new_plan_id
+        ):
+            subscription.pending_plan_id = None
+            subscription.plan_change_effective_at = None
+
+        # Cancel any pending payments tied to the old plan change so
+        # they don't interfere with the new checkout flow.
+        stale_payments = (
+            db.query(Payment)
+            .filter(
+                Payment.plan_change_id == existing_change.id,
+                Payment.status == PaymentRecordStatus.PENDING.value,
+            )
+            .all()
         )
+        for sp in stale_payments:
+            sp.status = PaymentRecordStatus.CANCELLED.value
+
+        db.flush()
 
     price_difference = round(
         float(new_plan.price) - float(current_plan.price),

@@ -9,3 +9,9 @@ Frontend/*
 /migartions/
 migartions/*
 migrations/
+# Ignore uploaded files but keep the directory
+static/uploads/*
+!static/uploads/.gitkeep
+!static/uploads/categories/*
+!static/uploads/meals/*
+!static/uploads/plans/*
