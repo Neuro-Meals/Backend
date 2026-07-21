@@ -315,11 +315,17 @@ MEAL_DATA = [
 
 PLAN_DATA = [
     {
-        "name": "1 Month Hot Plan",
-        "description": (
+        "name_en": "1 Month Hot Plan",
+        "name_ar": "باقة شهر للوجبات الساخنة",
+        "description_en": (
             "One-month individual hot-meal subscription."
         ),
-        "price": Decimal("1999.00"),
+        "description_ar": (
+            "اشتراك لمدة شهر واحد لتوصيل الوجبات الساخنة بشكل فردي."
+        ),
+        "plan_type": PlanType.MONTHLY,
+        "goal": PlanGoal.HEALTHY_LIFESTYLE,
+        "price": 1999.00,
         "duration_days": 30,
         "meals_per_day": 1,
         "total_meals": 30,
@@ -329,11 +335,17 @@ PLAN_DATA = [
         "is_active": True,
     },
     {
-        "name": "1 Month Cold Plan",
-        "description": (
+        "name_en": "1 Month Cold Plan",
+        "name_ar": "باقة شهر للوجبات الباردة",
+        "description_en": (
             "One-month bulk cold-meal subscription."
         ),
-        "price": Decimal("1799.00"),
+        "description_ar": (
+            "اشتراك لمدة شهر واحد لتوصيل الوجبات الباردة بالجملة."
+        ),
+        "plan_type": PlanType.MONTHLY,
+        "goal": PlanGoal.HEALTHY_LIFESTYLE,
+        "price": 1799.00,
         "duration_days": 30,
         "meals_per_day": 1,
         "total_meals": 30,
@@ -343,11 +355,17 @@ PLAN_DATA = [
         "is_active": True,
     },
     {
-        "name": "2 Months Hot Plan",
-        "description": (
+        "name_en": "2 Months Hot Plan",
+        "name_ar": "باقة شهرين للوجبات الساخنة",
+        "description_en": (
             "Two-month individual hot-meal subscription."
         ),
-        "price": Decimal("3699.00"),
+        "description_ar": (
+            "اشتراك لمدة شهرين لتوصيل الوجبات الساخنة بشكل فردي."
+        ),
+        "plan_type": PlanType.MONTHLY,
+        "goal": PlanGoal.HEALTHY_LIFESTYLE,
+        "price": 3699.00,
         "duration_days": 60,
         "meals_per_day": 1,
         "total_meals": 60,
@@ -357,11 +375,17 @@ PLAN_DATA = [
         "is_active": True,
     },
     {
-        "name": "2 Months Cold Plan",
-        "description": (
+        "name_en": "2 Months Cold Plan",
+        "name_ar": "باقة شهرين للوجبات الباردة",
+        "description_en": (
             "Two-month bulk cold-meal subscription."
         ),
-        "price": Decimal("3299.00"),
+        "description_ar": (
+            "اشتراك لمدة شهرين لتوصيل الوجبات الباردة بالجملة."
+        ),
+        "plan_type": PlanType.MONTHLY,
+        "goal": PlanGoal.HEALTHY_LIFESTYLE,
+        "price": 3299.00,
         "duration_days": 60,
         "meals_per_day": 1,
         "total_meals": 60,
@@ -371,11 +395,17 @@ PLAN_DATA = [
         "is_active": True,
     },
     {
-        "name": "3 Months Hot Plan",
-        "description": (
+        "name_en": "3 Months Hot Plan",
+        "name_ar": "باقة ثلاثة أشهر للوجبات الساخنة",
+        "description_en": (
             "Three-month individual hot-meal subscription."
         ),
-        "price": Decimal("5099.00"),
+        "description_ar": (
+            "اشتراك لمدة ثلاثة أشهر لتوصيل الوجبات الساخنة بشكل فردي."
+        ),
+        "plan_type": PlanType.MONTHLY,
+        "goal": PlanGoal.HEALTHY_LIFESTYLE,
+        "price": 5099.00,
         "duration_days": 90,
         "meals_per_day": 1,
         "total_meals": 90,
@@ -385,11 +415,17 @@ PLAN_DATA = [
         "is_active": True,
     },
     {
-        "name": "3 Months Cold Plan",
-        "description": (
+        "name_en": "3 Months Cold Plan",
+        "name_ar": "باقة ثلاثة أشهر للوجبات الباردة",
+        "description_en": (
             "Three-month bulk cold-meal subscription."
         ),
-        "price": Decimal("4499.00"),
+        "description_ar": (
+            "اشتراك لمدة ثلاثة أشهر لتوصيل الوجبات الباردة بالجملة."
+        ),
+        "plan_type": PlanType.MONTHLY,
+        "goal": PlanGoal.HEALTHY_LIFESTYLE,
+        "price": 4499.00,
         "duration_days": 90,
         "meals_per_day": 1,
         "total_meals": 90,
@@ -857,68 +893,69 @@ def seed_meals(
 
 def get_plan_by_name(
     db: Session,
-    name: str,
+    name_en: str,
 ) -> MealPlan | None:
+    normalized_name = name_en.strip().lower()
+
     return (
         db.query(MealPlan)
         .filter(
-            func.lower(MealPlan.name)
-            == name.strip().lower(),
+            func.lower(MealPlan.name_en) == normalized_name,
         )
         .first()
     )
-
 
 def create_or_update_plan(
     db: Session,
     *,
     data: dict[str, Any],
-    plan_type: PlanType,
-    plan_goal: PlanGoal,
 ) -> tuple[MealPlan, bool]:
     plan = get_plan_by_name(
         db,
-        data["name"],
+        data["name_en"],
     )
 
     created = plan is None
 
     if created:
         plan = MealPlan(
-            name=data["name"],
-            description=data["description"],
-            plan_type=plan_type,
-            goal=plan_goal,
-            price=data["price"],
-            duration_days=data["duration_days"],
-            meals_per_day=data["meals_per_day"],
-            total_meals=data["total_meals"],
+            name_en=data["name_en"].strip(),
+            name_ar=data.get("name_ar"),
+            description_en=data.get("description_en"),
+            description_ar=data.get("description_ar"),
+            plan_type=data["plan_type"],
+            goal=data.get("goal"),
             delivery_type=data["delivery_type"],
-            delivery_temperature=(
-                data["delivery_temperature"]
-            ),
-            image_url=data["image_url"],
-            is_active=data["is_active"],
+            delivery_temperature=data["delivery_temperature"],
+            price=float(data["price"]),
+            duration_days=int(data["duration_days"]),
+            meals_per_day=int(data["meals_per_day"]),
+            total_meals=int(data["total_meals"]),
+            image_url=data.get("image_url"),
+            is_active=data.get("is_active", True),
         )
 
         db.add(plan)
 
     else:
-        plan.description = data["description"]
-        plan.plan_type = plan_type
-        plan.goal = plan_goal
-        plan.price = data["price"]
-        plan.duration_days = data["duration_days"]
-        plan.meals_per_day = data["meals_per_day"]
-        plan.total_meals = data["total_meals"]
+        plan.name_en = data["name_en"].strip()
+        plan.name_ar = data.get("name_ar")
+        plan.description_en = data.get("description_en")
+        plan.description_ar = data.get("description_ar")
+        plan.plan_type = data["plan_type"]
+        plan.goal = data.get("goal")
         plan.delivery_type = data["delivery_type"]
-        plan.delivery_temperature = (
-            data["delivery_temperature"]
-        )
-        plan.is_active = data["is_active"]
+        plan.delivery_temperature = data[
+            "delivery_temperature"
+        ]
+        plan.price = float(data["price"])
+        plan.duration_days = int(data["duration_days"])
+        plan.meals_per_day = int(data["meals_per_day"])
+        plan.total_meals = int(data["total_meals"])
+        plan.is_active = data.get("is_active", True)
 
-        # Preserve images uploaded through the admin panel.
-        if not plan.image_url and data["image_url"]:
+        # Preserve an image already uploaded by an administrator.
+        if not plan.image_url and data.get("image_url"):
             plan.image_url = data["image_url"]
 
     db.flush()
@@ -929,9 +966,6 @@ def create_or_update_plan(
 def seed_plans(
     db: Session,
 ) -> tuple[list[MealPlan], int, int]:
-    plan_type = get_default_plan_type()
-    plan_goal = get_default_plan_goal()
-
     plans: list[MealPlan] = []
     created_count = 0
     updated_count = 0
@@ -940,8 +974,6 @@ def seed_plans(
         plan, created = create_or_update_plan(
             db,
             data=plan_data,
-            plan_type=plan_type,
-            plan_goal=plan_goal,
         )
 
         plans.append(plan)
