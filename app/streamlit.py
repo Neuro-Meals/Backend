@@ -689,9 +689,7 @@ def render_subscription_dashboard(data):
 
     with st.expander("Raw API Response"):
         st.json(data)
-
-
-
+        
 def fetch_api_json(path, *, params=None, timeout=30):
     """Fetch JSON without automatically printing the full raw response."""
     url = f"{API_BASE}{path}"

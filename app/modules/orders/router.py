@@ -282,7 +282,6 @@ def list_orders(
                     payment.stripe_payment_intent_id if payment else None
                     ),
                 },
-
                 "delivery": {
                     "id": delivery.id if delivery else None,
                     "status": (
