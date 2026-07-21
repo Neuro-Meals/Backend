@@ -27,7 +27,7 @@ from app.modules.plans.models import (
     PlanType,
 )
 
-from app.modules.plan_menu.models import (
+from app.modules.plan_menus.models import (
     PlanMenuItem,
     WeekDay,
 )
