@@ -1,6 +1,5 @@
 from __future__ import annotations
-
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypeVar
@@ -129,22 +128,20 @@ CATEGORY_DATA = [
 
 
 MEAL_DATA = [
-
     {
         "category": "Carbohydrates",
         "name_en": "Mashed Potatoes",
         "name_ar": "بطاطس مهروسة",
-        "description": (
-            "Smooth and creamy mashed potatoes."
-        ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_en": "Smooth and creamy mashed potatoes.",
+        "description_ar": "بطاطس مهروسة ناعمة وكريمية.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
@@ -155,17 +152,16 @@ MEAL_DATA = [
         "category": "Carbohydrates",
         "name_en": "Creamy Pasta",
         "name_ar": "باستا كريمية",
-        "description": (
-            "Pasta prepared with a smooth creamy sauce."
-        ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_en": "Pasta prepared with a smooth creamy sauce.",
+        "description_ar": "باستا محضرة بصلصة كريمية ناعمة.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
@@ -176,17 +172,16 @@ MEAL_DATA = [
         "category": "Carbohydrates",
         "name_en": "White Rice",
         "name_ar": "أرز أبيض",
-        "description": (
-            "Steamed white rice."
-        ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_en": "Steamed white rice.",
+        "description_ar": "أرز أبيض مطهو على البخار.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
@@ -197,39 +192,36 @@ MEAL_DATA = [
         "category": "Carbohydrates",
         "name_en": "Biryani Rice",
         "name_ar": "أرز برياني",
-        "description": (
-            "Seasoned biryani-style rice."
-        ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_en": "Seasoned biryani-style rice.",
+        "description_ar": "أرز متبل على طريقة البرياني.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
         "diet_tags": [],
         "is_available": True,
     },
-
     {
         "category": "Proteins",
         "name_en": "Chicken Satay",
         "name_ar": "دجاج ساتيه",
-        "description": (
-            "Seasoned chicken inspired by satay flavours."
-        ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_en": "Seasoned chicken inspired by satay flavours.",
+        "description_ar": "دجاج متبل بنكهات مستوحاة من الساتيه.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
@@ -240,17 +232,18 @@ MEAL_DATA = [
         "category": "Proteins",
         "name_en": "Mexican Chicken",
         "name_ar": "دجاج مكسيكي",
-        "description": (
+        "description_en": (
             "Chicken prepared with Mexican-inspired seasoning."
         ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_ar": "دجاج محضر بتوابل مستوحاة من المطبخ المكسيكي.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
@@ -261,17 +254,16 @@ MEAL_DATA = [
         "category": "Proteins",
         "name_en": "Creamy Chicken",
         "name_ar": "دجاج كريمي",
-        "description": (
-            "Chicken served with a smooth creamy sauce."
-        ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_en": "Chicken served with a smooth creamy sauce.",
+        "description_ar": "دجاج يقدم مع صلصة كريمية ناعمة.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
@@ -282,17 +274,16 @@ MEAL_DATA = [
         "category": "Proteins",
         "name_en": "Chicken Fajita",
         "name_ar": "فاهيتا الدجاج",
-        "description": (
-            "Chicken prepared with fajita-style seasoning."
-        ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_en": "Chicken prepared with fajita-style seasoning.",
+        "description_ar": "دجاج محضر بتوابل الفاهيتا.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
@@ -303,17 +294,16 @@ MEAL_DATA = [
         "category": "Proteins",
         "name_en": "Lemon Chicken",
         "name_ar": "دجاج بالليمون",
-        "description": (
-            "Chicken prepared with a fresh lemon flavour."
-        ),
-        "calories": 0,
-        "protein_g": 0,
-        "carbs_g": 0,
-        "fat_g": 0,
-        "fiber_g": 0,
-        "sugar_g": 0,
-        "sodium_mg": 0,
-        "price": Decimal("0.00"),
+        "description_en": "Chicken prepared with a fresh lemon flavour.",
+        "description_ar": "دجاج محضر بنكهة الليمون الطازج.",
+        "calories": 0.0,
+        "protein_g": 0.0,
+        "carbs_g": 0.0,
+        "fat_g": 0.0,
+        "fiber_g": 0.0,
+        "sugar_g": 0.0,
+        "sodium_mg": 0.0,
+        "price": 0.0,
         "image_url": None,
         "ingredients": [],
         "allergens": [],
@@ -632,7 +622,7 @@ def create_or_update_admin_user(
             role=role,
             is_active=True,
             is_verified=True,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
         )
 
         db.add(user)
@@ -755,45 +745,76 @@ def create_or_update_meal(
     if created:
         meal = Meal(
             category_id=category.id,
-            name_en=data["name_en"],
-            name_ar=data["name_ar"],
-            description=data["description"],
-            calories=data["calories"],
-            protein_g=data["protein_g"],
-            carbs_g=data["carbs_g"],
-            fat_g=data["fat_g"],
-            fiber_g=data["fiber_g"],
-            sugar_g=data["sugar_g"],
-            sodium_mg=data["sodium_mg"],
-            price=data["price"],
-            image_url=data["image_url"],
-            ingredients=data["ingredients"],
-            allergens=data["allergens"],
-            diet_tags=data["diet_tags"],
-            is_available=data["is_available"],
+            name_en=data["name_en"].strip(),
+            name_ar=data.get("name_ar"),
+            description_en=data.get("description_en"),
+            description_ar=data.get("description_ar"),
+            calories=float(data["calories"]),
+            protein_g=float(data["protein_g"]),
+            carbs_g=float(data["carbs_g"]),
+            fat_g=float(data["fat_g"]),
+            fiber_g=(
+                float(data["fiber_g"])
+                if data.get("fiber_g") is not None
+                else None
+            ),
+            sugar_g=(
+                float(data["sugar_g"])
+                if data.get("sugar_g") is not None
+                else None
+            ),
+            sodium_mg=(
+                float(data["sodium_mg"])
+                if data.get("sodium_mg") is not None
+                else None
+            ),
+            price=float(data["price"]),
+            image_url=data.get("image_url"),
+            ingredients=data.get("ingredients"),
+            allergens=data.get("allergens"),
+            diet_tags=data.get("diet_tags"),
+            is_available=data.get("is_available", True),
         )
 
         db.add(meal)
 
     else:
         meal.category_id = category.id
-        meal.name_ar = data["name_ar"]
-        meal.description = data["description"]
-        meal.calories = data["calories"]
-        meal.protein_g = data["protein_g"]
-        meal.carbs_g = data["carbs_g"]
-        meal.fat_g = data["fat_g"]
-        meal.fiber_g = data["fiber_g"]
-        meal.sugar_g = data["sugar_g"]
-        meal.sodium_mg = data["sodium_mg"]
-        meal.price = data["price"]
-        meal.ingredients = data["ingredients"]
-        meal.allergens = data["allergens"]
-        meal.diet_tags = data["diet_tags"]
-        meal.is_available = data["is_available"]
+        meal.name_en = data["name_en"].strip()
+        meal.name_ar = data.get("name_ar")
+        meal.description_en = data.get("description_en")
+        meal.description_ar = data.get("description_ar")
+        meal.calories = float(data["calories"])
+        meal.protein_g = float(data["protein_g"])
+        meal.carbs_g = float(data["carbs_g"])
+        meal.fat_g = float(data["fat_g"])
 
-        # Do not overwrite an image uploaded by an admin.
-        if not meal.image_url and data["image_url"]:
+        meal.fiber_g = (
+            float(data["fiber_g"])
+            if data.get("fiber_g") is not None
+            else None
+        )
+
+        meal.sugar_g = (
+            float(data["sugar_g"])
+            if data.get("sugar_g") is not None
+            else None
+        )
+
+        meal.sodium_mg = (
+            float(data["sodium_mg"])
+            if data.get("sodium_mg") is not None
+            else None
+        )
+
+        meal.price = float(data["price"])
+        meal.ingredients = data.get("ingredients")
+        meal.allergens = data.get("allergens")
+        meal.diet_tags = data.get("diet_tags")
+        meal.is_available = data.get("is_available", True)
+
+        # Preserve an image uploaded through the admin dashboard.
+        if not meal.image_url and data.get("image_url"):
             meal.image_url = data["image_url"]
 
     db.flush()
