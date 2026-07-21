@@ -17,7 +17,6 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5 MB
 
-
 @router.post("/images")
 async def upload_multiple_images(
     files: list[UploadFile] = File(...),
