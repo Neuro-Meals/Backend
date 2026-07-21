@@ -7,11 +7,6 @@ from app.core.security import hash_password
 from app.db.database import SessionLocal
 from app.modules.users.models import User, UserRole
 
-
-# ============================================================
-# LOAD SEED CONFIGURATION
-# ============================================================
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SEED_ENV_FILE = PROJECT_ROOT / ".env.seed"
 
@@ -74,11 +69,6 @@ ADMIN_PASSWORD = get_required_setting(
     "SEED_ADMIN_PASSWORD"
 )
 
-
-# ============================================================
-# VALIDATION
-# ============================================================
-
 def validate_seed_configuration() -> None:
     if len(SUPER_ADMIN_PASSWORD) < 8:
         raise RuntimeError(
@@ -118,11 +108,6 @@ def validate_seed_configuration() -> None:
             ADMIN_EMAIL,
         )
 
-
-# ============================================================
-# DATABASE QUERIES
-# ============================================================
-
 def get_user_by_email(
     db: Session,
     email: str,
@@ -145,11 +130,6 @@ def get_user_by_phone(
         .filter(User.phone == phone.strip())
         .first()
     )
-
-
-# ============================================================
-# CREATE OR UPDATE ADMIN USER
-# ============================================================
 
 def create_or_update_admin_user(
     db: Session,
@@ -218,11 +198,6 @@ def create_or_update_admin_user(
     db.flush()
 
     return user, created
-
-
-# ============================================================
-# MAIN SEED
-# ============================================================
 
 def seed_admin_users() -> None:
     validate_seed_configuration()
