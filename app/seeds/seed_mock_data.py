@@ -3,7 +3,6 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 from sqlalchemy.orm import Session
-
 from app.core.security import hash_password
 from app.db.database import SessionLocal
 from app.modules.users.models import User, UserRole
@@ -13,8 +12,8 @@ from app.modules.users.models import User, UserRole
 # LOAD SEED CONFIGURATION
 # ============================================================
 
-BASE_DIR = Path(__file__).resolve().parent
-SEED_ENV_FILE = BASE_DIR / ".env.seed"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SEED_ENV_FILE = PROJECT_ROOT / ".env.seed"
 
 seed_config = dotenv_values(SEED_ENV_FILE)
 
