@@ -1,83 +1,86 @@
-import os
 from datetime import datetime
-from dotenv import load_dotenv
+from pathlib import Path
+
+from dotenv import dotenv_values
 from sqlalchemy.orm import Session
+
 from app.core.security import hash_password
-from app.db.database import Base, SessionLocal, engine
+from app.db.database import SessionLocal
 from app.modules.users.models import User, UserRole
 
-load_dotenv()
 
-SUPER_ADMIN_FIRST_NAME = os.getenv(
+# ============================================================
+# LOAD SEED CONFIGURATION
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent
+SEED_ENV_FILE = BASE_DIR / ".env.seed"
+
+seed_config = dotenv_values(SEED_ENV_FILE)
+
+
+def get_required_setting(name: str) -> str:
+    value = seed_config.get(name)
+
+    if value is None or not str(value).strip():
+        raise RuntimeError(
+            f"Missing required setting '{name}' in {SEED_ENV_FILE}"
+        )
+
+    return str(value).strip()
+
+
+SUPER_ADMIN_FIRST_NAME = seed_config.get(
     "SEED_SUPER_ADMIN_FIRST_NAME",
     "Super",
-)
+).strip()
 
-SUPER_ADMIN_LAST_NAME = os.getenv(
+SUPER_ADMIN_LAST_NAME = seed_config.get(
     "SEED_SUPER_ADMIN_LAST_NAME",
     "Admin",
+).strip()
+
+SUPER_ADMIN_EMAIL = get_required_setting(
+    "SEED_SUPER_ADMIN_EMAIL"
+).lower()
+
+SUPER_ADMIN_PHONE = get_required_setting(
+    "SEED_SUPER_ADMIN_PHONE"
 )
 
-SUPER_ADMIN_EMAIL = os.getenv(
-    "SEED_SUPER_ADMIN_EMAIL",
-    "superadmin@nutriomeals.com",
-).strip().lower()
-
-SUPER_ADMIN_PHONE = os.getenv(
-    "SEED_SUPER_ADMIN_PHONE",
-    "+966500000001",
-)
-
-SUPER_ADMIN_PASSWORD = os.getenv(
-    "SEED_SUPER_ADMIN_PASSWORD",
+SUPER_ADMIN_PASSWORD = get_required_setting(
+    "SEED_SUPER_ADMIN_PASSWORD"
 )
 
 
-ADMIN_FIRST_NAME = os.getenv(
+ADMIN_FIRST_NAME = seed_config.get(
     "SEED_ADMIN_FIRST_NAME",
     "System",
-)
+).strip()
 
-ADMIN_LAST_NAME = os.getenv(
+ADMIN_LAST_NAME = seed_config.get(
     "SEED_ADMIN_LAST_NAME",
     "Admin",
+).strip()
+
+ADMIN_EMAIL = get_required_setting(
+    "SEED_ADMIN_EMAIL"
+).lower()
+
+ADMIN_PHONE = get_required_setting(
+    "SEED_ADMIN_PHONE"
 )
 
-ADMIN_EMAIL = os.getenv(
-    "SEED_ADMIN_EMAIL",
-    "admin@nutriomeals.com",
-).strip().lower()
-
-ADMIN_PHONE = os.getenv(
-    "SEED_ADMIN_PHONE",
-    "+966500000002",
+ADMIN_PASSWORD = get_required_setting(
+    "SEED_ADMIN_PASSWORD"
 )
 
-ADMIN_PASSWORD = os.getenv(
-    "SEED_ADMIN_PASSWORD",
-)
 
-def validate_environment() -> None:
-    missing_variables = []
+# ============================================================
+# VALIDATION
+# ============================================================
 
-    if not SUPER_ADMIN_PASSWORD:
-        missing_variables.append(
-            "SEED_SUPER_ADMIN_PASSWORD"
-        )
-
-    if not ADMIN_PASSWORD:
-        missing_variables.append(
-            "SEED_ADMIN_PASSWORD"
-        )
-
-    if missing_variables:
-        variables = ", ".join(missing_variables)
-
-        raise RuntimeError(
-            "Missing required environment variables: "
-            f"{variables}"
-        )
-
+def validate_seed_configuration() -> None:
     if len(SUPER_ADMIN_PASSWORD) < 8:
         raise RuntimeError(
             "SEED_SUPER_ADMIN_PASSWORD must contain "
@@ -92,7 +95,7 @@ def validate_environment() -> None:
 
     if SUPER_ADMIN_EMAIL == ADMIN_EMAIL:
         raise RuntimeError(
-            "Super Admin and Admin must use different emails."
+            "Super Admin and Admin must use different email addresses."
         )
 
     if SUPER_ADMIN_PHONE == ADMIN_PHONE:
@@ -100,15 +103,36 @@ def validate_environment() -> None:
             "Super Admin and Admin must use different phone numbers."
         )
 
+    if not SUPER_ADMIN_EMAIL.endswith(
+        ("@gmail.com", "@nutriomeals.com")
+    ):
+        print(
+            "Warning: Super Admin email uses an unexpected domain:",
+            SUPER_ADMIN_EMAIL,
+        )
+
+    if not ADMIN_EMAIL.endswith(
+        ("@gmail.com", "@nutriomeals.com")
+    ):
+        print(
+            "Warning: Admin email uses an unexpected domain:",
+            ADMIN_EMAIL,
+        )
+
+
+# ============================================================
+# DATABASE QUERIES
+# ============================================================
+
 def get_user_by_email(
     db: Session,
     email: str,
 ) -> User | None:
+    normalized_email = email.strip().lower()
+
     return (
         db.query(User)
-        .filter(
-            User.email == email.strip().lower()
-        )
+        .filter(User.email == normalized_email)
         .first()
     )
 
@@ -119,12 +143,14 @@ def get_user_by_phone(
 ) -> User | None:
     return (
         db.query(User)
-        .filter(
-            User.phone == phone
-        )
+        .filter(User.phone == phone.strip())
         .first()
     )
 
+
+# ============================================================
+# CREATE OR UPDATE ADMIN USER
+# ============================================================
 
 def create_or_update_admin_user(
     db: Session,
@@ -137,6 +163,7 @@ def create_or_update_admin_user(
     role: UserRole,
 ) -> tuple[User, bool]:
     normalized_email = email.strip().lower()
+    normalized_phone = phone.strip()
 
     user = get_user_by_email(
         db=db,
@@ -145,7 +172,7 @@ def create_or_update_admin_user(
 
     phone_owner = get_user_by_phone(
         db=db,
-        phone=phone,
+        phone=normalized_phone,
     )
 
     if (
@@ -156,21 +183,19 @@ def create_or_update_admin_user(
         )
     ):
         raise RuntimeError(
-            f"Phone number {phone} is already used by "
-            f"another account: {phone_owner.email}"
+            f"Phone number {normalized_phone} is already used "
+            f"by another account: {phone_owner.email}"
         )
 
-    created = False
+    created = user is None
 
-    if user is None:
+    if created:
         user = User(
-            first_name=first_name,
-            last_name=last_name,
+            first_name=first_name.strip(),
+            last_name=last_name.strip(),
             email=normalized_email,
-            phone=phone,
-            hashed_password=hash_password(
-                password
-            ),
+            phone=normalized_phone,
+            hashed_password=hash_password(password),
             role=role,
             is_active=True,
             is_verified=True,
@@ -178,35 +203,30 @@ def create_or_update_admin_user(
         )
 
         db.add(user)
-        created = True
 
     else:
-        user.first_name = first_name
-        user.last_name = last_name
-        user.phone = phone
+        user.first_name = first_name.strip()
+        user.last_name = last_name.strip()
+        user.phone = normalized_phone
         user.role = role
         user.is_active = True
         user.is_verified = True
 
-        # The seed resets the admin password to the value
-        # configured in the environment file.
-        user.hashed_password = hash_password(
-            password
-        )
+        # Running the seed again resets this account's password
+        # to the value stored inside .env.seed.
+        user.hashed_password = hash_password(password)
 
-    db.commit()
-    db.refresh(user)
+    db.flush()
 
     return user, created
 
-def seed_admin_users() -> None:
-    validate_environment()
 
-    # Alembic should normally create production tables.
-    # This line only ensures registered metadata exists.
-    Base.metadata.create_all(
-        bind=engine
-    )
+# ============================================================
+# MAIN SEED
+# ============================================================
+
+def seed_admin_users() -> None:
+    validate_seed_configuration()
 
     db = SessionLocal()
 
@@ -223,66 +243,64 @@ def seed_admin_users() -> None:
             )
         )
 
-        admin, admin_created = (
-            create_or_update_admin_user(
-                db=db,
-                first_name=ADMIN_FIRST_NAME,
-                last_name=ADMIN_LAST_NAME,
-                email=ADMIN_EMAIL,
-                phone=ADMIN_PHONE,
-                password=ADMIN_PASSWORD,
-                role=UserRole.ADMIN,
-            )
+        admin, admin_created = create_or_update_admin_user(
+            db=db,
+            first_name=ADMIN_FIRST_NAME,
+            last_name=ADMIN_LAST_NAME,
+            email=ADMIN_EMAIL,
+            phone=ADMIN_PHONE,
+            password=ADMIN_PASSWORD,
+            role=UserRole.ADMIN,
         )
 
-        print("")
+        db.commit()
+
+        db.refresh(super_admin)
+        db.refresh(admin)
+
+        print()
         print("==========================================")
         print("NutrioMeals production admin seed complete")
         print("==========================================")
-        print("")
+        print()
 
         print(
             "Super Admin:",
-            "created"
-            if super_admin_created
-            else "updated",
+            "created" if super_admin_created else "updated",
         )
-        print(
-            f"  ID: {super_admin.id}"
-        )
-        print(
-            f"  Email: {super_admin.email}"
-        )
-        print(
-            f"  Role: {super_admin.role.value}"
-        )
-        print("")
+        print(f"  ID: {super_admin.id}")
+        print(f"  Name: {super_admin.first_name} {super_admin.last_name}")
+        print(f"  Email: {super_admin.email}")
+        print(f"  Phone: {super_admin.phone}")
+        print(f"  Role: {super_admin.role.value}")
+        print()
 
         print(
             "Admin:",
-            "created"
-            if admin_created
-            else "updated",
+            "created" if admin_created else "updated",
         )
-        print(
-            f"  ID: {admin.id}"
-        )
-        print(
-            f"  Email: {admin.email}"
-        )
-        print(
-            f"  Role: {admin.role.value}"
-        )
-        print("")
+        print(f"  ID: {admin.id}")
+        print(f"  Name: {admin.first_name} {admin.last_name}")
+        print(f"  Email: {admin.email}")
+        print(f"  Phone: {admin.phone}")
+        print(f"  Role: {admin.role.value}")
+        print()
 
         print(
-            "No mock customers, subscriptions, meals, "
-            "plans, orders or payments were created."
+            "No customers, chefs, drivers, meals, plans, "
+            "subscriptions, payments, notifications or orders "
+            "were created."
         )
-        print("")
+        print()
 
-    except Exception:
+    except Exception as exc:
         db.rollback()
+
+        print()
+        print("Admin seed failed.")
+        print(f"Reason: {exc}")
+        print()
+
         raise
 
     finally:
