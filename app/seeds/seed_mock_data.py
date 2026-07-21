@@ -126,7 +126,6 @@ CATEGORY_DATA = [
     },
 ]
 
-
 MEAL_DATA = [
     {
         "category": "Carbohydrates",
@@ -1242,7 +1241,6 @@ def seed_production_data() -> None:
 
     finally:
         db.close()
-
 
 if __name__ == "__main__":
     seed_production_data()
