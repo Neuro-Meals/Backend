@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, JSON 
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -24,7 +24,14 @@ class Meal(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
-    category_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    category_id: Mapped[int] = mapped_column(
+    ForeignKey(
+        "meal_categories.id",
+        ondelete="CASCADE",
+    ),
+    nullable=False,
+    index=True,
+)
 
     name_en: Mapped[str] = mapped_column(String(150), nullable=False, index=True)
     name_ar: Mapped[str | None] = mapped_column(String(150), nullable=True)

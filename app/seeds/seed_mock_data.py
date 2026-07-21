@@ -280,6 +280,5 @@ def seed_admin_users() -> None:
     finally:
         db.close()
 
-
 if __name__ == "__main__":
     seed_admin_users()

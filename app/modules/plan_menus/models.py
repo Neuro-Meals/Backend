@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-
+from app.modules.plans.models import MealTime
 from sqlalchemy import (
     Boolean,
     DateTime,
@@ -12,7 +12,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
-
 
 class WeekDay(str, Enum):
     MONDAY = "monday"
@@ -61,10 +60,23 @@ class PlanMenuItem(Base):
     )
 
     day_of_week: Mapped[WeekDay] = mapped_column(
-        SqlEnum(WeekDay),
-        nullable=False,
-        index=True,
-    )
+    SqlEnum(
+        WeekDay,
+        name="weekday",
+    ),
+    nullable=False,
+    index=True,
+)
+
+    meal_time: Mapped[MealTime] = mapped_column(
+    SqlEnum(
+        MealTime,
+        name="planmenumealtime",
+    ),
+    nullable=False,
+    default=MealTime.LUNCH,
+    index=True,
+)
 
     quantity: Mapped[int] = mapped_column(
         Integer,
@@ -98,11 +110,12 @@ class PlanMenuItem(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "plan_id",
-            "day_of_week",
-            "category_id",
-            "meal_id",
-            name="unique_plan_day_category_meal",
-        ),
-    )
+    UniqueConstraint(
+        "plan_id",
+        "day_of_week",
+        "meal_time",
+        "category_id",
+        "meal_id",
+        name="unique_plan_day_time_category_meal",
+    ),
+)

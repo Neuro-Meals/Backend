@@ -360,7 +360,6 @@ def update_order_status(
 
     return order
 
-
 @router.post("/{order_id}/cancel", response_model=OrderResponse)
 def cancel_order(
     order_id: int,
