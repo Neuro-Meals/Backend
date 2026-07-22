@@ -144,6 +144,7 @@ def verify_email(
         raise HTTPException(status_code=400, detail="OTP has expired")
 
     user.is_verified = True
+    user.is_active = True
     user.email_otp = None
     user.email_otp_expires_at = None
 

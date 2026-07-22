@@ -50,6 +50,7 @@ class PaymentResponse(BaseModel):
     subscription_id: int
     plan_change_id: int | None = None
 
+    
     provider: PaymentProvider
     status: PaymentRecordStatus
 

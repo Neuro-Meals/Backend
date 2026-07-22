@@ -72,8 +72,19 @@ class User(Base):
     password_reset_otp: Mapped[str | None] = mapped_column(String(10), nullable=True)
     password_reset_otp_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_verified = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
+        nullable=False,
+)
+
+    is_active = mapped_column(
+        Boolean,
+        default=False,
+        server_default="false",
+        nullable=False,
+)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
