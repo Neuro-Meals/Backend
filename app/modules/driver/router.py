@@ -177,10 +177,18 @@ def delete_driver(
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
 
-    driver.is_active = False
+    # Null out delivery references to this driver
+    db.query(Delivery).filter(Delivery.driver_id == driver_id).update(
+        {"driver_id": None}
+    )
+
+    # Delete notifications for this user
+    db.query(Notification).filter(Notification.user_id == driver_id).delete()
+
+    db.delete(driver)
     db.commit()
 
-    return {"message": "Driver deactivated successfully", "id": driver_id}
+    return {"message": "Driver deleted successfully", "id": driver_id}
 
 
 @router.get("/deliveries", response_model=list[DeliveryResponse])
