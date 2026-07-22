@@ -92,7 +92,35 @@ def create_driver(
     db.add(welcome)
     db.commit()
 
-    return driver
+    return {
+        "id": driver.id,
+        "first_name": driver.first_name,
+        "last_name": driver.last_name,
+        "email": driver.email,
+        "phone": driver.phone,
+        "location": driver.location,
+        "address": driver.address,
+        "role": driver.role.value if driver.role else None,
+        "is_active": driver.is_active,
+        "is_verified": driver.is_verified,
+        "created_at": driver.created_at.isoformat() if driver.created_at else None,
+    }
+
+
+def serialize_driver(driver: User) -> dict:
+    return {
+        "id": driver.id,
+        "first_name": driver.first_name,
+        "last_name": driver.last_name,
+        "email": driver.email,
+        "phone": driver.phone,
+        "location": driver.location,
+        "address": driver.address,
+        "role": driver.role.value if driver.role else None,
+        "is_active": driver.is_active,
+        "is_verified": driver.is_verified,
+        "created_at": driver.created_at.isoformat() if driver.created_at else None,
+    }
 
 
 @router.get("/admin")
@@ -100,7 +128,8 @@ def list_drivers(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
 ):
-    return db.query(User).filter(User.role == UserRole.DRIVER).order_by(User.id.desc()).all()
+    drivers = db.query(User).filter(User.role == UserRole.DRIVER).order_by(User.id.desc()).all()
+    return [serialize_driver(d) for d in drivers]
 
 
 @router.get("/admin/{driver_id}")
@@ -114,7 +143,7 @@ def get_driver(
     if not driver:
         raise HTTPException(status_code=404, detail="Driver not found")
 
-    return driver
+    return serialize_driver(driver)
 
 
 @router.put("/admin/{driver_id}")
@@ -134,7 +163,7 @@ def update_driver(
 
     db.commit()
     db.refresh(driver)
-    return driver
+    return serialize_driver(driver)
 
 
 @router.delete("/admin/{driver_id}")
@@ -151,7 +180,7 @@ def delete_driver(
     driver.is_active = False
     db.commit()
 
-    return {"message": "Driver deactivated successfully"}
+    return {"message": "Driver deactivated successfully", "id": driver_id}
 
 
 @router.get("/deliveries", response_model=list[DeliveryResponse])
