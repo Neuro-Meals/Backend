@@ -199,8 +199,90 @@ def list_deliveries(
         .all()
     )
 
+    result = []
+    for delivery in deliveries:
+        customer = (
+            db.query(User)
+            .filter(User.id == delivery.user_id)
+            .first()
+        )
+
+        driver = None
+        if delivery.driver_id:
+            driver = (
+                db.query(User)
+                .filter(User.id == delivery.driver_id)
+                .first()
+            )
+
+        order = (
+            db.query(Order)
+            .filter(Order.id == delivery.order_id)
+            .first()
+        )
+
+        # Count meals from order items
+        meal_count = 0
+        meal_names = []
+        if order and order.items:
+            items = order.items
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        qty = int(item.get("quantity", 1))
+                        meal_count += qty
+                        name = item.get("meal_name") or item.get("name") or ""
+                        if name:
+                            meal_names.append(f"{name} x{qty}" if qty > 1 else name)
+
+        result.append({
+            "id": delivery.id,
+            "order_id": delivery.order_id,
+            "user_id": delivery.user_id,
+            "driver_id": delivery.driver_id,
+            "status": enum_value(delivery.status),
+            "delivery_address": delivery.delivery_address,
+            "delivery_notes": delivery.delivery_notes,
+            "scheduled_at": delivery.scheduled_at,
+            "picked_up_at": delivery.picked_up_at,
+            "delivered_at": delivery.delivered_at,
+            "current_latitude": delivery.current_latitude,
+            "current_longitude": delivery.current_longitude,
+            "failure_reason": delivery.failure_reason,
+            "created_at": delivery.created_at,
+            "updated_at": delivery.updated_at,
+            "customer": {
+                "id": customer.id,
+                "first_name": customer.first_name,
+                "last_name": customer.last_name,
+                "full_name": f"{customer.first_name} {customer.last_name}",
+                "email": customer.email,
+                "phone": customer.phone,
+                "location": customer.location,
+                "address": customer.address,
+            } if customer else None,
+            "driver": {
+                "id": driver.id,
+                "first_name": driver.first_name,
+                "last_name": driver.last_name,
+                "full_name": f"{driver.first_name} {driver.last_name}",
+                "email": driver.email,
+                "phone": driver.phone,
+            } if driver else None,
+            "order": {
+                "id": order.id,
+                "order_number": order.order_number,
+                "status": enum_value(order.status),
+                "total_amount": order.total_amount,
+                "delivery_date": order.delivery_date,
+                "items": order.items if order else [],
+            } if order else None,
+            "meal_count": meal_count,
+            "meal_summary": ", ".join(meal_names[:3]) + (" +" + str(len(meal_names) - 3) if len(meal_names) > 3 else ""),
+        })
+
     return {
-        "data": deliveries,
+        "data": result,
         "meta": {
             "total": total,
             "page": page,

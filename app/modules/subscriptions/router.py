@@ -347,6 +347,7 @@ def create_subscription(
                     "or pending subscription"
                 ),
                 "subscription_id": existing_subscription.id,
+                "plan_id": existing_subscription.plan_id,
                 "status": enum_value(existing_subscription.status),
                 "payment_status": enum_value(
                     existing_subscription.payment_status
@@ -569,6 +570,8 @@ def list_subscriptions(
         results.append(
             {
                 "id": subscription.id,
+                "user_id": subscription.user_id,
+                "plan_id": subscription.plan_id,
                 "status": enum_value(subscription.status),
                 "payment_status": enum_value(
                     subscription.payment_status
