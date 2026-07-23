@@ -48,7 +48,6 @@ def get_driver_delivery(db: Session, delivery_id: int, driver_id: int) -> Delive
 
     return delivery
 
-
 @router.post("/admin")
 def create_driver(
     payload: DriverCreate,

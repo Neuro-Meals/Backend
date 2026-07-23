@@ -3,15 +3,6 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from collections import defaultdict
-from datetime import date, datetime, timedelta
-
-from app.modules.meals.models import Meal, MealCategory
-from app.modules.plan_menus.models import (
-    PlanMenuItem,
-    WeekDay,
-)
-
 from app.db.database import get_db
 from app.modules.auth.dependencies import (
     get_current_user,
@@ -63,27 +54,6 @@ def enum_value(value):
 
     return value.value if hasattr(value, "value") else value
 
-WEEKDAY_BY_NUMBER = {
-    0: WeekDay.MONDAY,
-    1: WeekDay.TUESDAY,
-    2: WeekDay.WEDNESDAY,
-    3: WeekDay.THURSDAY,
-    4: WeekDay.FRIDAY,
-    5: WeekDay.SATURDAY,
-    6: WeekDay.SUNDAY,
-}
-
-
-WEEKDAY_ORDER = [
-    WeekDay.MONDAY,
-    WeekDay.TUESDAY,
-    WeekDay.WEDNESDAY,
-    WeekDay.THURSDAY,
-    WeekDay.FRIDAY,
-    WeekDay.SATURDAY,
-    WeekDay.SUNDAY,
-]
-
 
 def get_active_customer_subscription(
     db: Session,
@@ -104,145 +74,6 @@ def get_active_customer_subscription(
         .order_by(Subscription.id.desc())
         .first()
     )
-
-
-def build_customer_menu_item(
-    db: Session,
-    menu_item: PlanMenuItem,
-) -> dict | None:
-    meal = (
-        db.query(Meal)
-        .filter(Meal.id == menu_item.meal_id)
-        .first()
-    )
-
-    if meal is None:
-        return None
-
-    return {
-        "id": meal.id,
-        "name_en": meal.name_en,
-        "name_ar": getattr(meal, "name_ar", None),
-
-        "description_en": getattr(
-            meal,
-            "description_en",
-            None,
-        ),
-        "description_ar": getattr(
-            meal,
-            "description_ar",
-            None,
-        ),
-
-        "quantity": menu_item.quantity,
-
-        "calories": getattr(meal, "calories", None),
-        "protein_g": getattr(meal, "protein_g", None),
-        "carbs_g": getattr(meal, "carbs_g", None),
-        "fat_g": getattr(meal, "fat_g", None),
-
-        "ingredients": getattr(
-            meal,
-            "ingredients",
-            None,
-        ) or [],
-
-        "allergens": getattr(
-            meal,
-            "allergens",
-            None,
-        ) or [],
-
-        "image_url": getattr(
-            meal,
-            "image_url",
-            None,
-        ),
-    }
-
-
-def build_day_menu(
-    db: Session,
-    plan_id: int,
-    weekday: WeekDay,
-) -> list[dict]:
-    menu_items = (
-        db.query(PlanMenuItem)
-        .filter(
-            PlanMenuItem.plan_id == plan_id,
-            PlanMenuItem.day_of_week == weekday,
-            PlanMenuItem.is_active.is_(True),
-        )
-        .order_by(
-            PlanMenuItem.sort_order.asc(),
-            PlanMenuItem.id.asc(),
-        )
-        .all()
-    )
-
-    grouped: dict[int, dict] = {}
-
-    for menu_item in menu_items:
-        category = (
-            db.query(MealCategory)
-            .filter(
-                MealCategory.id == menu_item.category_id
-            )
-            .first()
-        )
-
-        if category is None:
-            continue
-
-        meal_payload = build_customer_menu_item(
-            db=db,
-            menu_item=menu_item,
-        )
-
-        if meal_payload is None:
-            continue
-
-        if category.id not in grouped:
-            grouped[category.id] = {
-                "category": {
-                    "id": category.id,
-                    "name_en": category.name_en,
-                    "name_ar": getattr(
-                        category,
-                        "name_ar",
-                        None,
-                    ),
-                },
-                "meals": [],
-            }
-
-        grouped[category.id]["meals"].append(
-            meal_payload
-        )
-
-    return list(grouped.values())
-
-
-def build_weekly_menu(
-    db: Session,
-    plan_id: int,
-) -> list[dict]:
-    result = []
-
-    for weekday in WEEKDAY_ORDER:
-        result.append(
-            {
-                "day_of_week": weekday.value,
-                "categories": build_day_menu(
-                    db=db,
-                    plan_id=plan_id,
-                    weekday=weekday,
-                ),
-            }
-        )
-
-    return result
 
 
 def get_subscription_or_404(
@@ -388,7 +219,6 @@ def my_subscriptions(
 
 @router.get(
     "/my/current-details",
-    response_model=MyCurrentSubscriptionDetailsResponse,
 )
 def my_current_subscription_details(
     db: Session = Depends(get_db),
@@ -417,38 +247,29 @@ def my_current_subscription_details(
             detail="Subscription plan not found",
         )
 
-    today_date = date.today()
-    tomorrow_date = today_date + timedelta(days=1)
-
-    today_weekday = WEEKDAY_BY_NUMBER[
-        today_date.weekday()
-    ]
-
-    tomorrow_weekday = WEEKDAY_BY_NUMBER[
-        tomorrow_date.weekday()
-    ]
-
     return {
         "subscription": {
             "id": subscription.id,
-            "status": subscription.status,
-            "payment_status": subscription.payment_status,
+            "user_id": subscription.user_id,
+            "plan_id": subscription.plan_id,
+            "status": enum_value(subscription.status),
+            "payment_status": enum_value(
+                subscription.payment_status
+            ),
             "amount": subscription.amount,
             "start_date": subscription.start_date,
             "end_date": subscription.end_date,
             "paused_at": subscription.paused_at,
             "cancelled_at": subscription.cancelled_at,
+            "auto_renew": subscription.auto_renew,
             "notes": subscription.notes,
+            "created_at": subscription.created_at,
+            "updated_at": subscription.updated_at,
         },
-
         "plan": {
             "id": plan.id,
             "name_en": plan.name_en,
-            "name_ar": getattr(
-                plan,
-                "name_ar",
-                None,
-            ),
+            "name_ar": getattr(plan, "name_ar", None),
             "description_en": getattr(
                 plan,
                 "description_en",
@@ -471,33 +292,14 @@ def my_current_subscription_details(
             "total_meals": plan.total_meals,
             "image_url": plan.image_url,
         },
-
-        "today": {
-            "date": today_date.isoformat(),
-            "day_of_week": today_weekday.value,
-            "categories": build_day_menu(
-                db=db,
-                plan_id=plan.id,
-                weekday=today_weekday,
+        "meal_assignment": {
+            "status": "waiting_for_assignment",
+            "message": (
+                "Meals will be assigned by the nutrition team "
+                "after reviewing the customer profile."
             ),
         },
-
-        "tomorrow": {
-            "date": tomorrow_date.isoformat(),
-            "day_of_week": tomorrow_weekday.value,
-            "categories": build_day_menu(
-                db=db,
-                plan_id=plan.id,
-                weekday=tomorrow_weekday,
-            ),
-        },
-
-        "weekly_menu": build_weekly_menu(
-            db=db,
-            plan_id=plan.id,
-        ),
     }
-
 
 @router.get("/")
 def list_subscriptions(
