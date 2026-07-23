@@ -31,6 +31,9 @@ from app.modules.chef.router import router as chef_router
 from app.modules.chef.admin_router import (
     router as chef_admin_router,
 )
+from app.modules.meal_assignments.router import (
+    router as meal_assignments_router,
+)
 # from app.modules.plan_menus.router import (
 #     router as plan_menus_router,
 # )
@@ -90,6 +93,7 @@ app.include_router(chef_router)
 app.include_router(chef_admin_router)
 # app.include_router(plan_menus_router)
 app.include_router(order_automation_router)
+app.include_router(meal_assignments_router)
 
 @app.get("/")
 def root():

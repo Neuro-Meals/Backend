@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
-
+from app.modules.meal_assignments.models import MealAssignment
 from app.core.config import settings
 
 
