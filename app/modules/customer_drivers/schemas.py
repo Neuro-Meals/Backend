@@ -2,7 +2,6 @@ from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
-
 class CustomerDriverAssignRequest(BaseModel):
     customer_id: int = Field(..., gt=0)
     driver_id: int = Field(..., gt=0)
@@ -31,7 +30,7 @@ class DriverSummary(BaseModel):
     first_name: str
     last_name: str
     email: str
-    phone_number: Optional[str] = None
+    phone: str
 
 class CustomerSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -40,7 +39,7 @@ class CustomerSummary(BaseModel):
     first_name: str
     last_name: str
     email: str
-    phone_number: Optional[str] = None
+    phone: str
 
 class AdminSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -75,36 +74,10 @@ class CustomerDriverAssignmentResponse(BaseModel):
 
     updated_at: datetime
 
-class CustomerDriverDetailsResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    customer: CustomerSummary
-
-    assignment: CustomerDriverAssignmentResponse
-
-class DriverCustomerResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    assignment_id: int
-
-    customer: CustomerSummary
-
-    assigned_at: datetime
-
-    assignment_reason: Optional[str]
-
 class CustomerDriverAssignmentListResponse(BaseModel):
     total: int
-
     items: list[CustomerDriverAssignmentResponse]
-
-
-class DriverCustomerListResponse(BaseModel):
-    total: int
-
-    items: list[DriverCustomerResponse]
 
 class CustomerDriverDeleteResponse(BaseModel):
     success: bool
-
     message: str

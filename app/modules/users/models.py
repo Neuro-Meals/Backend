@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from datetime import datetime, time
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -18,6 +21,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
 
+if TYPE_CHECKING:
+    from app.modules.customer_drivers.models import CustomerDriverAssignment
 
 class UserRole(str, Enum):
     CUSTOMER = "customer"
@@ -50,8 +55,6 @@ class DeliveryPlaceType(str, Enum):
     SCHOOL = "school"
     UNIVERSITY = "university"
     OTHER = "other"
-
-
 class User(Base):
     __tablename__ = "users"
 
@@ -198,7 +201,7 @@ class User(Base):
     )
 
     delivery_preferences: Mapped[
-        list["UserCategoryDeliveryPreference"]
+        list[UserCategoryDeliveryPreference]
     ] = relationship(
         "UserCategoryDeliveryPreference",
         back_populates="user",
@@ -206,6 +209,28 @@ class User(Base):
         passive_deletes=True,
     )
 
+    customer_driver_assignments: Mapped[
+        list[CustomerDriverAssignment]
+    ] = relationship(
+        "CustomerDriverAssignment",
+        foreign_keys="CustomerDriverAssignment.customer_id",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    driver_customer_assignments: Mapped[
+        list[CustomerDriverAssignment]
+    ] = relationship(
+        "CustomerDriverAssignment",
+        foreign_keys="CustomerDriverAssignment.driver_id",
+    )
+
+    created_driver_assignments: Mapped[
+        list[CustomerDriverAssignment]
+    ] = relationship(
+        "CustomerDriverAssignment",
+        foreign_keys="CustomerDriverAssignment.assigned_by",
+    )
 
 class UserCategoryDeliveryPreference(Base):
     __tablename__ = "user_category_delivery_preferences"
@@ -313,17 +338,7 @@ class UserCategoryDeliveryPreference(Base):
         nullable=False,
     )
 
-    user: Mapped["User"] = relationship(
+    user: Mapped[User] = relationship(
         "User",
         back_populates="delivery_preferences",
     )
-    
-    customer_driver_assignment = relationship(
-    "CustomerDriverAssignment",
-    foreign_keys="CustomerDriverAssignment.customer_id",
-)
-
-    driver_customers = relationship(
-    "CustomerDriverAssignment",
-    foreign_keys="CustomerDriverAssignment.driver_id",
-)

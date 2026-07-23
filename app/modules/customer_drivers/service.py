@@ -433,14 +433,14 @@ def list_customer_driver_assignments(
                 (User.first_name.ilike(normalized_search))
                 | (User.last_name.ilike(normalized_search))
                 | (User.email.ilike(normalized_search))
-                | (User.phone_number.ilike(normalized_search))
+                | (User.phone.ilike(normalized_search))
             )
             |
             CustomerDriverAssignment.driver.has(
                 (User.first_name.ilike(normalized_search))
                 | (User.last_name.ilike(normalized_search))
                 | (User.email.ilike(normalized_search))
-                | (User.phone_number.ilike(normalized_search))
+                | (User.phone.ilike(normalized_search))
             )
         )
 
