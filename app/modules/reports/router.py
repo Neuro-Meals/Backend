@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, extract
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
@@ -224,12 +224,14 @@ def dashboard_report(
     monthly_revenue = (
         db.query(func.coalesce(func.sum(Payment.amount), 0))
         .filter(Payment.status == PaymentRecordStatus.PAID.value)
+        .filter(Payment.paid_at.isnot(None))
         .filter(func.to_char(Payment.paid_at, "YYYY-MM") == this_month)
         .scalar()
     )
     last_month_revenue = (
         db.query(func.coalesce(func.sum(Payment.amount), 0))
         .filter(Payment.status == PaymentRecordStatus.PAID.value)
+        .filter(Payment.paid_at.isnot(None))
         .filter(func.to_char(Payment.paid_at, "YYYY-MM") == last_month)
         .scalar()
     )
