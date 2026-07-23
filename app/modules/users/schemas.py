@@ -61,6 +61,13 @@ class UserUpdate(BaseModel):
     location: str | None = None
     address: str | None = None
     is_active: bool | None = None
+    gender: Gender | None = None
+    age: int | None = None
+    height_cm: float | None = None
+    weight_kg: float | None = None
+    fitness_goal: FitnessGoal | None = None
+    dietary_preference: str | None = None
+    allergies: list[str] | None = None
 
 
 class VerifyEmailOTP(BaseModel):
