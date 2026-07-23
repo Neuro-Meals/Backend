@@ -98,6 +98,7 @@ app.include_router(chef_admin_router)
 app.include_router(order_automation_router)
 app.include_router(meal_assignments_router)
 app.include_router(customer_driver_router)
+Base.metadata.create_all(bind=engine)
 
 
 @app.get("/")
