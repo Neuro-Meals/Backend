@@ -8,7 +8,8 @@ from app.core.security import hash_password
 from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.deliveries.models import Delivery, DeliveryStatus
-from app.modules.deliveries.schemas import DeliveryResponse, UpdateDriverLocation
+from app.modules.deliveries.schemas import DeliveryResponse, DriverDeliveryResponse, UpdateDriverLocation
+from app.modules.deliveries.router import build_driver_delivery_response
 from app.modules.notifications.models import Notification, NotificationChannel, NotificationType
 from app.modules.orders.models import Order, OrderStatus
 from app.modules.users.models import User, UserRole
@@ -191,23 +192,25 @@ def delete_driver(
     return {"message": "Driver deleted successfully", "id": driver_id}
 
 
-@router.get("/deliveries", response_model=list[DeliveryResponse])
+@router.get("/deliveries", response_model=list[DriverDeliveryResponse])
 def my_driver_deliveries(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DRIVER)),
 ):
-    return db.query(Delivery).filter(
+    deliveries = db.query(Delivery).filter(
         Delivery.driver_id == current_user.id
     ).order_by(Delivery.id.desc()).all()
+    return [build_driver_delivery_response(db, d) for d in deliveries]
 
 
-@router.get("/deliveries/{delivery_id}", response_model=DeliveryResponse)
+@router.get("/deliveries/{delivery_id}", response_model=DriverDeliveryResponse)
 def get_my_driver_delivery(
     delivery_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DRIVER)),
 ):
-    return get_driver_delivery(db, delivery_id, current_user.id)
+    delivery = get_driver_delivery(db, delivery_id, current_user.id)
+    return build_driver_delivery_response(db, delivery)
 
 
 @router.post("/deliveries/{delivery_id}/pickup", response_model=DeliveryResponse)
