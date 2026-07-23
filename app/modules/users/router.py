@@ -157,6 +157,74 @@ def list_users(
     }
 
 
+@router.get("/{user_id}")
+def show_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)),
+):
+    user = get_user_by_id(db, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    orders_count = db.query(func.count(Order.id)).filter(Order.user_id == user_id).scalar() or 0
+    total_spent = db.query(func.coalesce(func.sum(Order.total_amount), 0)).filter(Order.user_id == user_id).scalar() or 0
+
+    sub_row = (
+        db.query(
+            Subscription.id.label("sub_id"),
+            Subscription.status.label("sub_status"),
+            Subscription.amount.label("sub_amount"),
+            Subscription.start_date.label("sub_start"),
+            Subscription.end_date.label("sub_end"),
+            Subscription.payment_status.label("sub_payment_status"),
+            MealPlan.name_en.label("plan_name"),
+            MealPlan.id.label("plan_id"),
+        )
+        .join(MealPlan, Subscription.plan_id == MealPlan.id)
+        .filter(Subscription.user_id == user_id)
+        .order_by(Subscription.id.desc())
+        .first()
+    )
+
+    subscription = None
+    if sub_row:
+        subscription = {
+            "id": sub_row.sub_id,
+            "status": sub_row.sub_status.value if hasattr(sub_row.sub_status, 'value') else str(sub_row.sub_status),
+            "amount": float(sub_row.sub_amount),
+            "start_date": sub_row.sub_start.isoformat() if sub_row.sub_start else None,
+            "end_date": sub_row.sub_end.isoformat() if sub_row.sub_end else None,
+            "payment_status": sub_row.sub_payment_status.value if hasattr(sub_row.sub_payment_status, 'value') else str(sub_row.sub_payment_status),
+            "plan_name": sub_row.plan_name,
+            "plan_id": sub_row.plan_id,
+        }
+
+    return {
+        "id": user.id,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": user.email,
+        "phone": user.phone,
+        "location": user.location,
+        "address": user.address,
+        "gender": user.gender.value if user.gender else None,
+        "age": user.age,
+        "height_cm": user.height_cm,
+        "weight_kg": user.weight_kg,
+        "fitness_goal": user.fitness_goal.value if user.fitness_goal else None,
+        "dietary_preference": user.dietary_preference,
+        "allergies": user.allergies,
+        "role": user.role.value if hasattr(user.role, 'value') else str(user.role),
+        "is_active": user.is_active,
+        "is_verified": user.is_verified,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "orders_count": orders_count,
+        "total_spent": float(total_spent),
+        "subscription": subscription,
+    }
+
+
 @router.patch("/{user_id}/role", response_model=UserResponse)
 def update_user_role(
     user_id: int,
