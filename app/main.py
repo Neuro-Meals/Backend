@@ -28,6 +28,7 @@ from app.modules.dashboard.router import router as dashboard_router
 from app.modules.locations.router import router as locations_router
 from app.modules.chatbot.router import router as chatbot_router
 from app.modules.chef.router import router as chef_router
+from app.modules.customer_drivers.router import router as customer_driver_router
 from app.modules.chef.admin_router import (
     router as chef_admin_router,
 )
@@ -94,6 +95,7 @@ app.include_router(chef_admin_router)
 # app.include_router(plan_menus_router)
 app.include_router(order_automation_router)
 app.include_router(meal_assignments_router)
+app.include_router(customer_driver_router)
 
 @app.get("/")
 def root():

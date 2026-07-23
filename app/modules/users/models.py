@@ -317,3 +317,13 @@ class UserCategoryDeliveryPreference(Base):
         "User",
         back_populates="delivery_preferences",
     )
+    
+    customer_driver_assignment = relationship(
+    "CustomerDriverAssignment",
+    foreign_keys="CustomerDriverAssignment.customer_id",
+)
+
+    driver_customers = relationship(
+    "CustomerDriverAssignment",
+    foreign_keys="CustomerDriverAssignment.driver_id",
+)
