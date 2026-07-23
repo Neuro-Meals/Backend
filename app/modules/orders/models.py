@@ -97,7 +97,7 @@ class Order(Base):
     status: Mapped[OrderStatus] = mapped_column(
         SqlEnum(
             OrderStatus,
-            name="order_status",
+            name="orderstatus",
         ),
         default=OrderStatus.PENDING,
         server_default=OrderStatus.PENDING.value,
