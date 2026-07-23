@@ -15,24 +15,34 @@ from app.modules.orders.automation_schemas import (
     AutomaticOrderGenerationResponse,
 )
 from app.modules.orders.automation_service import (
-    WEEKDAY_MAPPING,
-    build_subscription_order_items,
     confirm_scheduled_orders_for_date,
     generate_orders_for_date,
-    subscription_is_valid_for_date,
+    preview_orders_for_date,
 )
-from app.modules.plans.models import MealPlan
-from app.modules.subscriptions.models import (
-    PaymentStatus,
-    Subscription,
-    SubscriptionStatus,
+from app.modules.users.models import (
+    User,
+    UserRole,
 )
-from app.modules.users.models import User, UserRole
 
 
 router = APIRouter(
     prefix="/orders/automation",
     tags=["Automatic Orders"],
+)
+
+
+AUTOMATION_ADMIN_ROLES = (
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+)
+
+
+AUTOMATION_PREVIEW_ROLES = (
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+    UserRole.NUTRITION_MANAGER,
+    UserRole.CHEF,
+    UserRole.DELIVERY_MANAGER,
 )
 
 
@@ -48,11 +58,17 @@ def generate_automatic_orders(
     db: Session = Depends(get_db),
     current_user: User = Depends(
         require_roles(
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
+            *AUTOMATION_ADMIN_ROLES
         )
     ),
 ):
+    """
+    Generate orders for a selected date.
+
+    Orders are generated from active MealAssignment rows,
+    not from plan menus.
+    """
+
     return generate_orders_for_date(
         db=db,
         target_date=target_date,
@@ -67,11 +83,14 @@ def generate_tomorrow_orders(
     db: Session = Depends(get_db),
     current_user: User = Depends(
         require_roles(
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
+            *AUTOMATION_ADMIN_ROLES
         )
     ),
 ):
+    """
+    Generate tomorrow's scheduled orders.
+    """
+
     tomorrow = date.today() + timedelta(
         days=1
     )
@@ -80,29 +99,53 @@ def generate_tomorrow_orders(
         db=db,
         target_date=tomorrow,
     )
-    
-    
-@router.post(
-    "/confirm-today",
-)
+
+
+@router.post("/confirm-today")
 def confirm_today_scheduled_orders(
     db: Session = Depends(get_db),
     current_user: User = Depends(
         require_roles(
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
+            *AUTOMATION_ADMIN_ROLES
         )
     ),
 ):
+    """
+    Change today's scheduled orders to confirmed.
+    """
+
     return confirm_scheduled_orders_for_date(
         db=db,
         target_date=date.today(),
-    )    
+    )
 
 
-@router.get(
-    "/preview",
+@router.post(
+    "/confirm",
 )
+def confirm_scheduled_orders(
+    target_date: date = Query(
+        default_factory=date.today,
+        alias="date",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            *AUTOMATION_ADMIN_ROLES
+        )
+    ),
+):
+    """
+    Confirm scheduled orders for a selected date.
+    """
+
+    return confirm_scheduled_orders_for_date(
+        db=db,
+        target_date=target_date,
+    )
+
+
+@router.get("/preview")
 def preview_automatic_orders(
     target_date: date = Query(
         default_factory=date.today,
@@ -111,97 +154,39 @@ def preview_automatic_orders(
     db: Session = Depends(get_db),
     current_user: User = Depends(
         require_roles(
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-            UserRole.CHEF,
+            *AUTOMATION_PREVIEW_ROLES
         )
     ),
 ):
-    subscriptions = (
-        db.query(Subscription)
-        .filter(
-            Subscription.status
-            == SubscriptionStatus.ACTIVE,
-            Subscription.payment_status
-            == PaymentStatus.PAID,
-        )
-        .order_by(Subscription.id.asc())
-        .all()
+    """
+    Preview automatic orders without creating records.
+    """
+
+    return preview_orders_for_date(
+        db=db,
+        target_date=target_date,
     )
 
-    data = []
 
-    for subscription in subscriptions:
-        if not subscription_is_valid_for_date(
-            subscription,
-            target_date,
-        ):
-            continue
-
-        items = build_subscription_order_items(
-            db=db,
-            subscription=subscription,
-            target_date=target_date,
+@router.get("/preview-tomorrow")
+def preview_tomorrow_automatic_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            *AUTOMATION_PREVIEW_ROLES
         )
+    ),
+):
+    """
+    Preview tomorrow's automatic orders without creating
+    records.
+    """
 
-        user = (
-            db.query(User)
-            .filter(
-                User.id
-                == subscription.user_id
-            )
-            .first()
-        )
+    tomorrow = date.today() + timedelta(
+        days=1
+    )
 
-        plan = (
-            db.query(MealPlan)
-            .filter(
-                MealPlan.id
-                == subscription.plan_id
-            )
-            .first()
-        )
-
-        data.append(
-            {
-                "subscription_id": (
-                    subscription.id
-                ),
-                "user_id": subscription.user_id,
-                "customer": (
-                    {
-                        "id": user.id,
-                        "name": (
-                            f"{user.first_name} "
-                            f"{user.last_name}"
-                        ).strip(),
-                        "phone": user.phone,
-                        "address": user.address,
-                        "allergies": (
-                            user.allergies or []
-                        ),
-                    }
-                    if user
-                    else None
-                ),
-                "plan": (
-                    {
-                        "id": plan.id,
-                        "name": plan.name_en,
-                    }
-                    if plan
-                    else None
-                ),
-                "meal_count": len(items),
-                "items": items,
-            }
-        )
-
-    return {
-        "target_date": target_date,
-        "weekday": WEEKDAY_MAPPING[
-            target_date.weekday()
-        ].value,
-        "total_subscriptions": len(data),
-        "data": data,
-    }
+    return preview_orders_for_date(
+        db=db,
+        target_date=tomorrow,
+    )
