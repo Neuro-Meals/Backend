@@ -17,6 +17,18 @@ def normalize_phone(phone: str) -> str:
     )
 
 
+def normalize_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    cleaned_value = value.strip()
+
+    if not cleaned_value:
+        return None
+
+    return cleaned_value
+
+
 def get_user_by_id(
     db: Session,
     user_id: int,
@@ -67,8 +79,8 @@ def create_user(
         phone=normalize_phone(payload.phone),
         hashed_password=hash_password(payload.password),
 
-        location=payload.location.strip(),
-        address=payload.address.strip(),
+        location=normalize_optional_text(payload.location),
+        address=normalize_optional_text(payload.address),
 
         role=UserRole.CUSTOMER,
         is_verified=False,
@@ -79,14 +91,17 @@ def create_user(
             datetime.utcnow() + timedelta(minutes=10)
         ),
 
-        # These values will be completed later from the profile page.
-        gender=None,
-        age=None,
-        height_cm=None,
-        weight_kg=None,
-        fitness_goal=None,
-        dietary_preference=None,
-        allergies=[],
+        # The customer completes these fields later
+        # from the complete profile page.
+        gender=payload.gender,
+        age=payload.age,
+        height_cm=payload.height_cm,
+        weight_kg=payload.weight_kg,
+        fitness_goal=payload.fitness_goal,
+        dietary_preference=normalize_optional_text(
+            payload.dietary_preference
+        ),
+        allergies=payload.allergies or [],
     )
 
     db.add(user)

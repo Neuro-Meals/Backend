@@ -300,7 +300,6 @@ def my_current_subscription_details(
             ),
         },
     }
-
 @router.get("/")
 def list_subscriptions(
     db: Session = Depends(get_db),
