@@ -278,9 +278,9 @@ def list_orders(
                     "amount": payment.amount if payment else order.total_amount,
                     "currency": payment.currency if payment else "usd",
                     "paid_at": payment.paid_at if payment else None,
-                    "stripe_payment_intent_id": (
-                    payment.stripe_payment_intent_id if payment else None
-                    ),
+                    "payment_intent_id": (
+                    payment.provider_payment_id if payment else None
+                    ), 
                 },
                 "delivery": {
                     "id": delivery.id if delivery else None,
