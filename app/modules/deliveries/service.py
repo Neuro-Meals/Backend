@@ -1496,3 +1496,5 @@ def get_delivery_statistics(
         "completion_rate": completion_rate,
         "failure_rate": failure_rate,
     }
+    
+    
