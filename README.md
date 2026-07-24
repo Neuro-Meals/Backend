@@ -263,3 +263,19 @@ WHERE pg_type.typname = 'userrole';
 alembic revision \
   --autogenerate \
   -m "add plan weekly menu items"
+
+
+# REUSABLE DATA BASE 
+
+  cd /home/ubuntu/Backend
+source .venv/bin/activate
+
+export DB_NAME="nutrio_meals"
+export LEGACY_DB_NAME="nutrio_meals_legacy_20260724_122059"
+export DB_OWNER="postgres"
+export RESET_DATE="$(date +%Y%m%d_%H%M%S)"
+
+echo "New database: $DB_NAME"
+echo "Legacy database: $LEGACY_DB_NAME"
+echo "Database owner: $DB_OWNER"
+echo "Reset timestamp: $RESET_DATE"
