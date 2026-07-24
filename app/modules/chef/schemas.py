@@ -1,8 +1,9 @@
-from datetime import datetime
-from datetime import date
+from __future__ import annotations
+
+from datetime import date, datetime, time
+
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.deliveries.models import DeliveryStatus
 from app.modules.orders.models import OrderStatus
 
 
@@ -13,18 +14,59 @@ class ChefCustomerResponse(BaseModel):
     full_name: str | None = None
     email: str | None = None
     phone: str | None = None
-    location: str | None = None
-    address: str | None = None
+    allergies: list[str] = Field(default_factory=list)
+    dietary_preference: str | None = None
 
 
-class ChefOrderDeliveryResponse(BaseModel):
+class ChefDriverResponse(BaseModel):
     id: int
-    driver_id: int | None = None
-    status: DeliveryStatus
-    delivery_address: str
-    scheduled_at: datetime | None = None
-    picked_up_at: datetime | None = None
-    delivered_at: datetime | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+
+
+class ChefMealCategoryResponse(BaseModel):
+    id: int
+    name_en: str | None = None
+    name_ar: str | None = None
+
+
+class ChefDeliverySnapshotResponse(BaseModel):
+    delivery_preference_id: int
+    place_type: str | None = None
+    place_name: str | None = None
+    city: str | None = None
+    area: str | None = None
+    address: str
+    latitude: float | None = None
+    longitude: float | None = None
+    notes: str | None = None
+
+
+class ChefOrderItemResponse(BaseModel):
+    meal_assignment_item_id: int | None = None
+    meal_id: int | None = None
+    meal_name: str | None = None
+    meal_name_ar: str | None = None
+    description: str | None = None
+    quantity: int = 1
+    unit_price: float = 0
+    line_total: float = 0
+    calories: float | int | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
+    fiber_g: float | None = None
+    sugar_g: float | None = None
+    sodium_mg: float | None = None
+    ingredients: list = Field(default_factory=list)
+    allergens: list = Field(default_factory=list)
+    diet_tags: list = Field(default_factory=list)
+    image_url: str | None = None
+    notes: str | None = None
+    assignment_notes: str | None = None
 
 
 class ChefOrderResponse(BaseModel):
@@ -35,24 +77,55 @@ class ChefOrderResponse(BaseModel):
     user_id: int
     subscription_id: int | None = None
     plan_id: int | None = None
+    meal_assignment_id: int
+    meal_category_id: int
+    driver_id: int
+    delivery_preference_id: int
 
+    delivery_date: date
+    delivery_time: time
     total_amount: float
 
-    delivery_date: datetime | None = None
-    delivery_address: str | None = None
+    delivery_place_type: str | None = None
+    delivery_place_name: str | None = None
+    delivery_city: str | None = None
+    delivery_area: str | None = None
+    delivery_address: str
+    delivery_latitude: float | None = None
+    delivery_longitude: float | None = None
     delivery_notes: str | None = None
 
-    items: list[dict] | None = None
+    items: list[ChefOrderItemResponse] = Field(
+        default_factory=list
+    )
+
+    confirmed_at: datetime | None = None
+    preparation_started_at: datetime | None = None
+    ready_at: datetime | None = None
+    out_for_delivery_at: datetime | None = None
+    delivered_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    cancellation_reason: str | None = None
 
     created_at: datetime
     updated_at: datetime
 
     customer: ChefCustomerResponse | None = None
-    delivery: ChefOrderDeliveryResponse | None = None
+    driver: ChefDriverResponse | None = None
+    meal_category: ChefMealCategoryResponse | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChefStatusResponse(BaseModel):
+    message: str
+    order: ChefOrderResponse
 
 
 class ChefDashboardResponse(BaseModel):
+    date: date
     total_orders: int
+    scheduled_orders: int
     pending_orders: int
     confirmed_orders: int
     preparing_orders: int
@@ -60,36 +133,10 @@ class ChefDashboardResponse(BaseModel):
     out_for_delivery_orders: int
     delivered_orders: int
     cancelled_orders: int
-
-    deliveries_needed: int
-    assigned_deliveries: int
-    available_drivers: int
-    total_active_drivers: int
+    total_meal_items: int
+    total_meal_quantity: int
 
 
-class AssignChefDriverRequest(BaseModel):
-    driver_id: int = Field(..., ge=1)
-    scheduled_at: datetime | None = None
-
-
-class ChefDriverResponse(BaseModel):
-    id: int
-    first_name: str
-    last_name: str
-    full_name: str
-    email: str
-    phone: str
-    location: str | None = None
-    is_active: bool
-
-    active_deliveries: int
-    available: bool
-
-
-class ChefStatusResponse(BaseModel):
-    message: str
-    order: ChefOrderResponse
-    
 class ChefMealSummaryItem(BaseModel):
     meal_id: int | None = None
     meal_name: str
@@ -100,7 +147,9 @@ class ChefMealSummaryResponse(BaseModel):
     date: date
     total_orders: int
     total_meals: int
-    meals: list[ChefMealSummaryItem]
+    meals: list[ChefMealSummaryItem] = Field(
+        default_factory=list
+    )
 
 
 class ChefAllergySummaryItem(BaseModel):
@@ -113,64 +162,49 @@ class ChefAllergyCustomerResponse(BaseModel):
     user_id: int
     full_name: str
     phone: str | None = None
-    allergies: list[str]
-    order_ids: list[int]
+    allergies: list[str] = Field(default_factory=list)
+    order_ids: list[int] = Field(default_factory=list)
 
 
 class ChefAllergySummaryResponse(BaseModel):
     date: date
     total_orders: int
     customers_with_allergies: int
-    allergies: list[ChefAllergySummaryItem]
-    customers: list[ChefAllergyCustomerResponse] 
-    
-class BulkAssignChefDriverRequest(BaseModel):
-    driver_id: int = Field(..., ge=1)
+    allergies: list[ChefAllergySummaryItem] = Field(
+        default_factory=list
+    )
+    customers: list[ChefAllergyCustomerResponse] = Field(
+        default_factory=list
+    )
 
+
+class ChefBulkStatusRequest(BaseModel):
     order_ids: list[int] = Field(
         ...,
         min_length=1,
         max_length=200,
     )
 
-    scheduled_at: datetime | None = None
 
-
-class BulkDriverAssignmentItemResponse(BaseModel):
+class ChefBulkStatusItemResponse(BaseModel):
     order_id: int
-    delivery_id: int
-    driver_id: int
-    order_status: str
-    delivery_status: str
+    order_number: str
+    status: OrderStatus
 
 
-class BulkDriverAssignmentErrorResponse(BaseModel):
+class ChefBulkStatusErrorResponse(BaseModel):
     order_id: int
     reason: str
 
 
-class BulkChefDriverAssignmentResponse(BaseModel):
+class ChefBulkStatusResponse(BaseModel):
     message: str
-    driver_id: int
-
     requested_orders: int
-    assigned_orders: int
+    updated_orders: int
     failed_orders: int
-
-    assignments: list[
-        BulkDriverAssignmentItemResponse
-    ]
-
-    failures: list[
-        BulkDriverAssignmentErrorResponse
-    ]       
-
-class ChefDeliveryAssignmentResponse(BaseModel):
-    message: str
-    delivery_id: int
-    order_id: int
-    driver_id: int
-    delivery_status: DeliveryStatus
-    order_status: OrderStatus
-
-    model_config = ConfigDict(from_attributes=True)
+    orders: list[ChefBulkStatusItemResponse] = Field(
+        default_factory=list
+    )
+    failures: list[ChefBulkStatusErrorResponse] = Field(
+        default_factory=list
+    )

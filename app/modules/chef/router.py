@@ -1,29 +1,26 @@
-from datetime import date, datetime, time, timedelta
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.chef.schemas import (
-    AssignChefDriverRequest,
-    BulkAssignChefDriverRequest,
-    BulkChefDriverAssignmentResponse,
     ChefAllergySummaryResponse,
+    ChefBulkStatusRequest,
+    ChefBulkStatusResponse,
     ChefDashboardResponse,
-    ChefDeliveryAssignmentResponse,
-    ChefDriverResponse,
     ChefMealSummaryResponse,
     ChefOrderResponse,
     ChefStatusResponse,
 )
-from app.modules.deliveries.models import Delivery, DeliveryStatus
 from app.modules.orders.models import Order, OrderStatus
 from app.modules.users.models import User, UserRole
-from collections import defaultdict
-from typing import Any
-from sqlalchemy.exc import IntegrityError
 
 
 router = APIRouter(
@@ -32,163 +29,31 @@ router = APIRouter(
 )
 
 
-def enum_value(value):
-    if value is None:
-        return None
+CHEF_ROLES = (
+    UserRole.CHEF,
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+)
 
-    return value.value if hasattr(value, "value") else value
 
-KITCHEN_ORDER_STATUSES = [
+KITCHEN_ACTIVE_STATUSES = (
+    OrderStatus.SCHEDULED,
     OrderStatus.PENDING,
     OrderStatus.CONFIRMED,
     OrderStatus.PREPARING,
     OrderStatus.READY_FOR_DELIVERY,
-]
-
-def assign_order_to_driver(
-    db: Session,
-    order: Order,
-    driver: User,
-    scheduled_at: datetime | None = None,
-) -> Delivery:
-    if order.status != OrderStatus.READY_FOR_DELIVERY:
-        raise ValueError(
-            "Order is not ready for delivery"
-        )
-
-    if not order.delivery_address:
-        raise ValueError(
-            "Order does not have a delivery address"
-        )
-
-    delivery = (
-        db.query(Delivery)
-        .filter(Delivery.order_id == order.id)
-        .first()
-    )
-
-    if delivery is not None:
-        if delivery.status == DeliveryStatus.DELIVERED:
-            raise ValueError(
-                "Order delivery is already completed"
-            )
-
-        if delivery.status == DeliveryStatus.CANCELLED:
-            raise ValueError(
-                "Order delivery is cancelled"
-            )
-
-        delivery.driver_id = driver.id
-        delivery.status = DeliveryStatus.ASSIGNED
-
-        if scheduled_at is not None:
-            delivery.scheduled_at = scheduled_at
-
-        if not delivery.delivery_address:
-            delivery.delivery_address = (
-                order.delivery_address
-            )
-
-        if not delivery.delivery_notes:
-            delivery.delivery_notes = (
-                order.delivery_notes
-            )
-
-    else:
-        delivery = Delivery(
-            order_id=order.id,
-            user_id=order.user_id,
-            driver_id=driver.id,
-            status=DeliveryStatus.ASSIGNED,
-            delivery_address=order.delivery_address,
-            delivery_notes=order.delivery_notes,
-            scheduled_at=(
-                scheduled_at
-                or order.delivery_date
-            ),
-        )
-
-        db.add(delivery)
-
-    return delivery
+)
 
 
-def get_date_range(target_date: date) -> tuple[datetime, datetime]:
-    start_datetime = datetime.combine(
-        target_date,
-        time.min,
-    )
-
-    end_datetime = start_datetime + timedelta(days=1)
-
-    return start_datetime, end_datetime
+def enum_value(value):
+    if value is None:
+        return None
+    return value.value if hasattr(value, "value") else value
 
 
-def get_orders_for_delivery_date(
-    db: Session,
-    target_date: date,
-    include_completed: bool = False,
-) -> list[Order]:
-    start_datetime, end_datetime = get_date_range(
-        target_date
-    )
-
-    query = db.query(Order).filter(
-        Order.delivery_date >= start_datetime,
-        Order.delivery_date < end_datetime,
-    )
-
-    if not include_completed:
-        query = query.filter(
-            Order.status.in_(KITCHEN_ORDER_STATUSES)
-        )
-
-    return (
-        query.order_by(
-            Order.delivery_date.asc(),
-            Order.id.asc(),
-        )
-        .all()
-    )
-
-
-def normalize_order_items(
-    items: Any,
-) -> list[dict]:
-    """
-    Convert Order.items into a predictable list of dictionaries.
-
-    Supported examples:
-
-    [
-        {
-            "meal_id": 1,
-            "meal_name": "Chicken Bowl",
-            "quantity": 2
-        }
-    ]
-
-    or:
-
-    {
-        "items": [...]
-    }
-    """
-
+def normalize_order_items(items: Any) -> list[dict]:
     if items is None:
         return []
-
-    if isinstance(items, dict):
-        nested_items = items.get("items")
-
-        if isinstance(nested_items, list):
-            return [
-                item
-                for item in nested_items
-                if isinstance(item, dict)
-            ]
-
-        return [items]
 
     if isinstance(items, list):
         return [
@@ -197,147 +62,49 @@ def normalize_order_items(
             if isinstance(item, dict)
         ]
 
+    if isinstance(items, dict):
+        nested = items.get("items")
+        if isinstance(nested, list):
+            return [
+                item
+                for item in nested
+                if isinstance(item, dict)
+            ]
+        return [items]
+
     return []
 
 
-def extract_meal_id(item: dict) -> int | None:
-    raw_value = (
-        item.get("meal_id")
-        or item.get("id")
-    )
-
-    if raw_value is None:
-        return None
-
-    try:
-        return int(raw_value)
-    except (TypeError, ValueError):
-        return None
-
-
-def extract_meal_name(item: dict) -> str:
-    return str(
-        item.get("meal_name")
-        or item.get("name_en")
-        or item.get("name")
-        or item.get("title")
-        or item.get("plan_name")
-        or "Unknown meal"
-    ).strip()
-
-
-def extract_item_quantity(item: dict) -> int:
-    raw_value = (
-        item.get("quantity")
-        or item.get("qty")
-        or item.get("count")
-        or 1
-    )
-
-    try:
-        quantity = int(raw_value)
-    except (TypeError, ValueError):
-        quantity = 1
-
-    return max(quantity, 1)
-
-
-def normalize_allergies(
-    allergies: Any,
-) -> list[str]:
-    if allergies is None:
+def normalize_allergies(value: Any) -> list[str]:
+    if value is None:
         return []
 
-    if isinstance(allergies, list):
-        values = allergies
-
-    elif isinstance(allergies, str):
-        values = allergies.split(",")
-
+    if isinstance(value, str):
+        values = value.split(",")
+    elif isinstance(value, list):
+        values = value
     else:
         return []
 
-    normalized = []
+    result = []
 
-    for allergy in values:
-        clean_allergy = str(allergy).strip().lower()
+    for item in values:
+        clean = str(item).strip().lower()
+        if clean and clean not in result:
+            result.append(clean)
 
-        if clean_allergy and clean_allergy not in normalized:
-            normalized.append(clean_allergy)
-
-    return normalized
-
-
-def build_customer_payload(
-    customer: User | None,
-) -> dict | None:
-    if customer is None:
-        return None
-
-    return {
-        "id": customer.id,
-        "first_name": customer.first_name,
-        "last_name": customer.last_name,
-        "full_name": (
-            f"{customer.first_name} {customer.last_name}"
-        ),
-        "email": customer.email,
-        "phone": customer.phone,
-        "location": getattr(customer, "location", None),
-        "address": getattr(customer, "address", None),
-    }
+    return result
 
 
-def build_delivery_payload(
-    delivery: Delivery | None,
-) -> dict | None:
-    if delivery is None:
-        return None
-
-    return {
-        "id": delivery.id,
-        "driver_id": delivery.driver_id,
-        "status": enum_value(delivery.status),
-        "delivery_address": delivery.delivery_address,
-        "scheduled_at": delivery.scheduled_at,
-        "picked_up_at": delivery.picked_up_at,
-        "delivered_at": delivery.delivered_at,
-    }
-
-
-def build_order_payload(
-    db: Session,
-    order: Order,
-) -> dict:
-    customer = (
-        db.query(User)
-        .filter(User.id == order.user_id)
-        .first()
+def order_query(db: Session):
+    return (
+        db.query(Order)
+        .options(
+            selectinload(Order.customer),
+            selectinload(Order.driver),
+            selectinload(Order.meal_category),
+        )
     )
-
-    delivery = (
-        db.query(Delivery)
-        .filter(Delivery.order_id == order.id)
-        .first()
-    )
-
-    return {
-        "id": order.id,
-        "order_number": order.order_number,
-        "status": enum_value(order.status),
-        "user_id": order.user_id,
-        "subscription_id": order.subscription_id,
-        "plan_id": order.plan_id,
-        "total_amount": order.total_amount,
-        "delivery_date": order.delivery_date,
-        "delivery_address": order.delivery_address,
-        "delivery_notes": order.delivery_notes,
-        "items": order.items,
-        "created_at": order.created_at,
-        "updated_at": order.updated_at,
-        "customer": build_customer_payload(customer),
-        "delivery": build_delivery_payload(delivery),
-    }
 
 
 def get_order_or_404(
@@ -345,7 +112,7 @@ def get_order_or_404(
     order_id: int,
 ) -> Order:
     order = (
-        db.query(Order)
+        order_query(db)
         .filter(Order.id == order_id)
         .first()
     )
@@ -359,182 +126,242 @@ def get_order_or_404(
     return order
 
 
+def customer_payload(user: User | None) -> dict | None:
+    if user is None:
+        return None
+
+    return {
+        "id": user.id,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "full_name": (
+            f"{user.first_name or ''} "
+            f"{user.last_name or ''}"
+        ).strip(),
+        "email": user.email,
+        "phone": user.phone,
+        "allergies": normalize_allergies(
+            getattr(user, "allergies", None)
+        ),
+        "dietary_preference": getattr(
+            user,
+            "dietary_preference",
+            None,
+        ),
+    }
+
+
+def driver_payload(user: User | None) -> dict | None:
+    if user is None:
+        return None
+
+    return {
+        "id": user.id,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "full_name": (
+            f"{user.first_name or ''} "
+            f"{user.last_name or ''}"
+        ).strip(),
+        "email": user.email,
+        "phone": user.phone,
+    }
+
+
+def category_payload(category) -> dict | None:
+    if category is None:
+        return None
+
+    return {
+        "id": category.id,
+        "name_en": getattr(category, "name_en", None),
+        "name_ar": getattr(category, "name_ar", None),
+    }
+
+
+def build_order_payload(order: Order) -> dict:
+    return {
+        "id": order.id,
+        "order_number": order.order_number,
+        "status": enum_value(order.status),
+        "user_id": order.user_id,
+        "subscription_id": order.subscription_id,
+        "plan_id": order.plan_id,
+        "meal_assignment_id": order.meal_assignment_id,
+        "meal_category_id": order.meal_category_id,
+        "driver_id": order.driver_id,
+        "delivery_preference_id": (
+            order.delivery_preference_id
+        ),
+        "delivery_date": order.delivery_date,
+        "delivery_time": order.delivery_time,
+        "total_amount": order.total_amount,
+        "delivery_place_type": (
+            order.delivery_place_type
+        ),
+        "delivery_place_name": (
+            order.delivery_place_name
+        ),
+        "delivery_city": order.delivery_city,
+        "delivery_area": order.delivery_area,
+        "delivery_address": order.delivery_address,
+        "delivery_latitude": (
+            order.delivery_latitude
+        ),
+        "delivery_longitude": (
+            order.delivery_longitude
+        ),
+        "delivery_notes": order.delivery_notes,
+        "items": normalize_order_items(order.items),
+        "confirmed_at": order.confirmed_at,
+        "preparation_started_at": (
+            order.preparation_started_at
+        ),
+        "ready_at": order.ready_at,
+        "out_for_delivery_at": (
+            order.out_for_delivery_at
+        ),
+        "delivered_at": order.delivered_at,
+        "cancelled_at": order.cancelled_at,
+        "cancellation_reason": (
+            order.cancellation_reason
+        ),
+        "created_at": order.created_at,
+        "updated_at": order.updated_at,
+        "customer": customer_payload(order.customer),
+        "driver": driver_payload(order.driver),
+        "meal_category": category_payload(
+            order.meal_category
+        ),
+    }
+
+
+def orders_for_date_query(
+    db: Session,
+    target_date: date,
+):
+    return (
+        order_query(db)
+        .filter(Order.delivery_date == target_date)
+    )
+
+
+def status_count(
+    db: Session,
+    target_date: date,
+    status: OrderStatus,
+) -> int:
+    return (
+        db.query(Order)
+        .filter(
+            Order.delivery_date == target_date,
+            Order.status == status,
+        )
+        .count()
+    )
+
+
 @router.get(
     "/dashboard",
     response_model=ChefDashboardResponse,
 )
 def chef_dashboard(
+    target_date: date = Query(
+        default_factory=date.today,
+        alias="date",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
+        require_roles(*CHEF_ROLES)
     ),
 ):
-    total_orders = db.query(Order).count()
-
-    pending_orders = (
-        db.query(Order)
-        .filter(Order.status == OrderStatus.PENDING)
-        .count()
-    )
-
-    confirmed_orders = (
-        db.query(Order)
-        .filter(Order.status == OrderStatus.CONFIRMED)
-        .count()
-    )
-
-    preparing_orders = (
-        db.query(Order)
-        .filter(Order.status == OrderStatus.PREPARING)
-        .count()
-    )
-
-    ready_orders = (
-        db.query(Order)
-        .filter(
-            Order.status == OrderStatus.READY_FOR_DELIVERY
-        )
-        .count()
-    )
-
-    out_for_delivery_orders = (
-        db.query(Order)
-        .filter(
-            Order.status == OrderStatus.OUT_FOR_DELIVERY
-        )
-        .count()
-    )
-
-    delivered_orders = (
-        db.query(Order)
-        .filter(Order.status == OrderStatus.DELIVERED)
-        .count()
-    )
-
-    cancelled_orders = (
-        db.query(Order)
-        .filter(Order.status == OrderStatus.CANCELLED)
-        .count()
-    )
-
-    deliveries_needed = (
-        db.query(Order)
-        .outerjoin(
-            Delivery,
-            Delivery.order_id == Order.id,
-        )
-        .filter(
-            Order.status == OrderStatus.READY_FOR_DELIVERY,
-            Delivery.id.is_(None),
-        )
-        .count()
-    )
-
-    assigned_deliveries = (
-        db.query(Delivery)
-        .filter(
-            Delivery.status.in_(
-                [
-                    DeliveryStatus.ASSIGNED,
-                    DeliveryStatus.PICKED_UP,
-                    DeliveryStatus.OUT_FOR_DELIVERY,
-                ]
-            )
-        )
-        .count()
-    )
-
-    active_drivers = (
-        db.query(User)
-        .filter(
-            User.role == UserRole.DRIVER,
-            User.is_active.is_(True),
-        )
+    orders = (
+        orders_for_date_query(db, target_date)
         .all()
     )
 
-    busy_driver_ids = {
-        driver_id
-        for (driver_id,) in (
-            db.query(Delivery.driver_id)
-            .filter(
-                Delivery.driver_id.isnot(None),
-                Delivery.status.in_(
-                    [
-                        DeliveryStatus.ASSIGNED,
-                        DeliveryStatus.PICKED_UP,
-                        DeliveryStatus.OUT_FOR_DELIVERY,
-                    ]
-                ),
-            )
-            .distinct()
-            .all()
-        )
+    items = [
+        item
+        for order in orders
+        for item in normalize_order_items(order.items)
+    ]
+
+    return {
+        "date": target_date,
+        "total_orders": len(orders),
+        "scheduled_orders": status_count(
+            db, target_date, OrderStatus.SCHEDULED
+        ),
+        "pending_orders": status_count(
+            db, target_date, OrderStatus.PENDING
+        ),
+        "confirmed_orders": status_count(
+            db, target_date, OrderStatus.CONFIRMED
+        ),
+        "preparing_orders": status_count(
+            db, target_date, OrderStatus.PREPARING
+        ),
+        "ready_for_delivery_orders": status_count(
+            db,
+            target_date,
+            OrderStatus.READY_FOR_DELIVERY,
+        ),
+        "out_for_delivery_orders": status_count(
+            db,
+            target_date,
+            OrderStatus.OUT_FOR_DELIVERY,
+        ),
+        "delivered_orders": status_count(
+            db, target_date, OrderStatus.DELIVERED
+        ),
+        "cancelled_orders": status_count(
+            db, target_date, OrderStatus.CANCELLED
+        ),
+        "total_meal_items": len(items),
+        "total_meal_quantity": sum(
+            max(int(item.get("quantity") or 1), 1)
+            for item in items
+        ),
     }
 
-    available_drivers = sum(
-        1
-        for driver in active_drivers
-        if driver.id not in busy_driver_ids
-    )
 
-    return ChefDashboardResponse(
-        total_orders=total_orders,
-        pending_orders=pending_orders,
-        confirmed_orders=confirmed_orders,
-        preparing_orders=preparing_orders,
-        ready_for_delivery_orders=ready_orders,
-        out_for_delivery_orders=out_for_delivery_orders,
-        delivered_orders=delivered_orders,
-        cancelled_orders=cancelled_orders,
-        deliveries_needed=deliveries_needed,
-        assigned_deliveries=assigned_deliveries,
-        available_drivers=available_drivers,
-        total_active_drivers=len(active_drivers),
-    )
-
-
-@router.get(
-    "/orders",
-)
+@router.get("/orders")
 def chef_orders(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
-    ),
     status: OrderStatus | None = Query(None),
     search: str | None = Query(None),
     delivery_date: date | None = Query(None),
+    meal_category_id: int | None = Query(
+        None,
+        ge=1,
+    ),
     page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(*CHEF_ROLES)
+    ),
 ):
-    query = db.query(Order)
+    query = order_query(db)
 
     if status is not None:
         query = query.filter(Order.status == status)
     else:
-        # By default, show the kitchen-relevant queue.
         query = query.filter(
-            Order.status.in_(
-                [
-                    OrderStatus.PENDING,
-                    OrderStatus.CONFIRMED,
-                    OrderStatus.PREPARING,
-                    OrderStatus.READY_FOR_DELIVERY,
-                ]
-            )
+            Order.status.in_(KITCHEN_ACTIVE_STATUSES)
+        )
+
+    if delivery_date is not None:
+        query = query.filter(
+            Order.delivery_date == delivery_date
+        )
+
+    if meal_category_id is not None:
+        query = query.filter(
+            Order.meal_category_id == meal_category_id
         )
 
     if search:
-        search_value = f"%{search.strip()}%"
+        value = f"%{search.strip()}%"
 
         query = (
             query.join(
@@ -543,33 +370,23 @@ def chef_orders(
             )
             .filter(
                 or_(
-                    Order.order_number.ilike(search_value),
-                    Order.delivery_address.ilike(search_value),
-                    User.first_name.ilike(search_value),
-                    User.last_name.ilike(search_value),
-                    User.email.ilike(search_value),
-                    User.phone.ilike(search_value),
+                    Order.order_number.ilike(value),
+                    Order.delivery_address.ilike(value),
+                    User.first_name.ilike(value),
+                    User.last_name.ilike(value),
+                    User.email.ilike(value),
+                    User.phone.ilike(value),
                 )
             )
-        )
-
-    if delivery_date is not None:
-        start_datetime = datetime.combine(
-            delivery_date,
-            time.min,
-        )
-        end_datetime = start_datetime + timedelta(days=1)
-
-        query = query.filter(
-            Order.delivery_date >= start_datetime,
-            Order.delivery_date < end_datetime,
         )
 
     total = query.count()
 
     orders = (
         query.order_by(
-            Order.delivery_date.asc().nullslast(),
+            Order.delivery_date.asc(),
+            Order.delivery_time.asc(),
+            Order.meal_category_id.asc(),
             Order.id.asc(),
         )
         .offset((page - 1) * limit)
@@ -579,7 +396,7 @@ def chef_orders(
 
     return {
         "data": [
-            build_order_payload(db, order)
+            build_order_payload(order)
             for order in orders
         ],
         "meta": {
@@ -593,452 +410,32 @@ def chef_orders(
             ),
         },
     }
-    
-    
-@router.get(
-    "/orders/today",
-)
+
+
+@router.get("/orders/today")
 def chef_today_orders(
+    include_completed: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
+        require_roles(*CHEF_ROLES)
     ),
-    include_completed: bool = Query(False),
 ):
     target_date = date.today()
 
-    orders = get_orders_for_delivery_date(
-        db=db,
-        target_date=target_date,
-        include_completed=include_completed,
+    query = orders_for_date_query(
+        db,
+        target_date,
     )
 
-    return {
-        "date": target_date,
-        "total": len(orders),
-        "data": [
-            build_order_payload(db, order)
-            for order in orders
-        ],
-    }    
-
-
-@router.get(
-    "/orders/today/grouped",
-)
-def chef_today_orders_grouped(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
-    ),
-    include_completed: bool = Query(False),
-):
-    """
-    Return today's orders grouped by meal time:
-    breakfast, lunch, dinner, and other.
-
-    Each group contains the category id, name, and
-    the list of orders that belong to it.
-    """
-    from app.modules.meals.models import MealCategory
-
-    target_date = date.today()
-
-    orders = get_orders_for_delivery_date(
-        db=db,
-        target_date=target_date,
-        include_completed=include_completed,
-    )
-
-    # Fetch all meal categories to build a lookup
-    categories = (
-        db.query(MealCategory)
-        .order_by(MealCategory.name_en.asc())
-        .all()
-    )
-
-    category_lookup = {
-        cat.id: cat for cat in categories
-    }
-
-    # Define meal-time buckets in display order
-    meal_time_order = [
-        "breakfast",
-        "lunch",
-        "dinner",
-        "snacks",
-        "other",
-    ]
-
-    def get_meal_time(cat_name: str) -> str:
-        name = (cat_name or "").lower().strip()
-        if "breakfast" in name:
-            return "breakfast"
-        if "lunch" in name:
-            return "lunch"
-        if "dinner" in name or "supper" in name:
-            return "dinner"
-        if "snack" in name:
-            return "snacks"
-        return "other"
-
-    # Build grouped structure
-    grouped: dict[str, dict] = {}
-    for bucket in meal_time_order:
-        grouped[bucket] = {
-            "meal_time": bucket,
-            "label": bucket.capitalize(),
-            "categories": {},
-            "order_count": 0,
-        }
-
-    for order in orders:
-        payload = build_order_payload(db, order)
-        items = normalize_order_items(order.items)
-
-        # Determine the primary category from the first item
-        primary_cat_id = None
-        primary_cat_name = None
-        for item in items:
-            cat_id = item.get("category_id")
-            cat_name = item.get("category_name")
-            if cat_id:
-                primary_cat_id = cat_id
-                primary_cat_name = cat_name
-                break
-
-        # If no category in items, try to look up from category_lookup
-        if primary_cat_id and primary_cat_id in category_lookup:
-            cat = category_lookup[primary_cat_id]
-            primary_cat_name = cat.name_en
-        elif primary_cat_id is None and items:
-            # No category info at all
-            primary_cat_id = 0
-            primary_cat_name = "Uncategorized"
-
-        if primary_cat_id is None:
-            primary_cat_id = 0
-            primary_cat_name = "Uncategorized"
-
-        meal_time = get_meal_time(primary_cat_name)
-
-        bucket = grouped[meal_time]
-        cat_key = str(primary_cat_id)
-
-        if cat_key not in bucket["categories"]:
-            bucket["categories"][cat_key] = {
-                "category_id": primary_cat_id,
-                "category_name": primary_cat_name,
-                "orders": [],
-            }
-
-        bucket["categories"][cat_key]["orders"].append(
-            payload
-        )
-        bucket["order_count"] += 1
-
-    # Convert category dicts to lists
-    result_groups = []
-    for bucket in meal_time_order:
-        data = grouped[bucket]
-        categories_list = list(data["categories"].values())
-        categories_list.sort(
-            key=lambda c: c["category_name"].lower()
-        )
-        result_groups.append({
-            "meal_time": data["meal_time"],
-            "label": data["label"],
-            "order_count": data["order_count"],
-            "categories": categories_list,
-        })
-
-    total_orders = sum(
-        g["order_count"] for g in result_groups
-    )
-
-    return {
-        "date": target_date,
-        "total": total_orders,
-        "groups": result_groups,
-    }
-
-
-@router.get(
-    "/orders/tomorrow",
-)
-def chef_tomorrow_orders(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
-    ),
-    include_completed: bool = Query(False),
-):
-    target_date = date.today() + timedelta(days=1)
-
-    orders = get_orders_for_delivery_date(
-        db=db,
-        target_date=target_date,
-        include_completed=include_completed,
-    )
-
-    return {
-        "date": target_date,
-        "total": len(orders),
-        "data": [
-            build_order_payload(db, order)
-            for order in orders
-        ],
-    }
-    
-@router.get(
-    "/meals/summary",
-    response_model=ChefMealSummaryResponse,
-)
-def chef_meal_summary(
-    target_date: date = Query(
-        default_factory=date.today,
-        alias="date",
-    ),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
-    ),
-):
-    orders = get_orders_for_delivery_date(
-        db=db,
-        target_date=target_date,
-        include_completed=False,
-    )
-
-    meal_summary: dict[str, dict] = {}
-
-    for order in orders:
-        order_items = normalize_order_items(
-            order.items
-        )
-
-        for item in order_items:
-            meal_id = extract_meal_id(item)
-            meal_name = extract_meal_name(item)
-            quantity = extract_item_quantity(item)
-
-            summary_key = (
-                f"id:{meal_id}"
-                if meal_id is not None
-                else f"name:{meal_name.lower()}"
-            )
-
-            if summary_key not in meal_summary:
-                meal_summary[summary_key] = {
-                    "meal_id": meal_id,
-                    "meal_name": meal_name,
-                    "quantity": 0,
-                }
-
-            meal_summary[summary_key]["quantity"] += quantity
-
-    meals = sorted(
-        meal_summary.values(),
-        key=lambda item: (
-            -item["quantity"],
-            item["meal_name"].lower(),
-        ),
-    )
-
-    total_meals = sum(
-        item["quantity"]
-        for item in meals
-    )
-
-    return {
-        "date": target_date,
-        "total_orders": len(orders),
-        "total_meals": total_meals,
-        "meals": meals,
-    }
-    
-  
-@router.get(
-    "/allergies/summary",
-    response_model=ChefAllergySummaryResponse,
-)
-def chef_allergy_summary(
-    target_date: date = Query(
-        default_factory=date.today,
-        alias="date",
-    ),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
-    ),
-):
-    orders = get_orders_for_delivery_date(
-        db=db,
-        target_date=target_date,
-        include_completed=False,
-    )
-
-    user_order_ids: dict[int, list[int]] = defaultdict(list)
-
-    for order in orders:
-        user_order_ids[order.user_id].append(
-            order.id
-        )
-
-    user_ids = list(user_order_ids.keys())
-
-    customers = []
-
-    if user_ids:
-        customers = (
-            db.query(User)
-            .filter(User.id.in_(user_ids))
-            .all()
-        )
-
-    allergy_customer_ids: dict[str, set[int]] = defaultdict(set)
-    allergy_order_ids: dict[str, set[int]] = defaultdict(set)
-
-    customer_results = []
-
-    for customer in customers:
-        allergies = normalize_allergies(
-            customer.allergies
-        )
-
-        if not allergies:
-            continue
-
-        order_ids = user_order_ids.get(
-            customer.id,
-            [],
-        )
-
-        for allergy in allergies:
-            allergy_customer_ids[allergy].add(
-                customer.id
-            )
-
-            allergy_order_ids[allergy].update(
-                order_ids
-            )
-
-        customer_results.append(
-            {
-                "user_id": customer.id,
-                "full_name": (
-                    f"{customer.first_name} "
-                    f"{customer.last_name}"
-                ).strip(),
-                "phone": customer.phone,
-                "allergies": allergies,
-                "order_ids": order_ids,
-            }
-        )
-
-    allergy_results = []
-
-    for allergy in sorted(
-        allergy_customer_ids.keys()
-    ):
-        allergy_results.append(
-            {
-                "allergy": allergy,
-                "customer_count": len(
-                    allergy_customer_ids[allergy]
-                ),
-                "order_count": len(
-                    allergy_order_ids[allergy]
-                ),
-            }
-        )
-
-    customer_results.sort(
-        key=lambda customer: customer["full_name"].lower()
-    )
-
-    return {
-        "date": target_date,
-        "total_orders": len(orders),
-        "customers_with_allergies": len(
-            customer_results
-        ),
-        "allergies": allergy_results,
-        "customers": customer_results,
-    }        
-
-@router.get(
-    "/orders/ready-for-delivery",
-)
-def chef_ready_for_delivery_orders(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-            UserRole.DELIVERY_MANAGER,
-        )
-    ),
-    unassigned_only: bool = Query(False),
-    target_date: date | None = Query(
-        None,
-        alias="date",
-    ),
-):
-    query = (
-        db.query(Order)
-        .outerjoin(
-            Delivery,
-            Delivery.order_id == Order.id,
-        )
-        .filter(
-            Order.status
-            == OrderStatus.READY_FOR_DELIVERY
-        )
-    )
-
-    if unassigned_only:
+    if not include_completed:
         query = query.filter(
-            or_(
-                Delivery.id.is_(None),
-                Delivery.driver_id.is_(None),
-            )
-        )
-
-    if target_date is not None:
-        start_datetime, end_datetime = get_date_range(
-            target_date
-        )
-
-        query = query.filter(
-            Order.delivery_date >= start_datetime,
-            Order.delivery_date < end_datetime,
+            Order.status.in_(KITCHEN_ACTIVE_STATUSES)
         )
 
     orders = (
         query.order_by(
-            Order.delivery_date.asc().nullslast(),
+            Order.delivery_time.asc(),
+            Order.meal_category_id.asc(),
             Order.id.asc(),
         )
         .all()
@@ -1046,54 +443,246 @@ def chef_ready_for_delivery_orders(
 
     return {
         "date": target_date,
-        "unassigned_only": unassigned_only,
         "total": len(orders),
         "data": [
-            build_order_payload(db, order)
+            build_order_payload(order)
             for order in orders
         ],
     }
-    
-@router.post(
-    "/orders/bulk-assign-driver",
-    response_model=BulkChefDriverAssignmentResponse,
-)
-def chef_bulk_assign_driver(
-    payload: BulkAssignChefDriverRequest,
+
+
+@router.get("/orders/tomorrow")
+def chef_tomorrow_orders(
+    include_completed: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-            UserRole.DELIVERY_MANAGER,
-        )
+        require_roles(*CHEF_ROLES)
     ),
 ):
-    driver = (
-        db.query(User)
-        .filter(
-            User.id == payload.driver_id,
-            User.role == UserRole.DRIVER,
-            User.is_active.is_(True),
-        )
-        .first()
+    target_date = date.today() + timedelta(days=1)
+
+    query = orders_for_date_query(
+        db,
+        target_date,
     )
 
-    if driver is None:
+    if not include_completed:
+        query = query.filter(
+            Order.status.in_(KITCHEN_ACTIVE_STATUSES)
+        )
+
+    orders = (
+        query.order_by(
+            Order.delivery_time.asc(),
+            Order.meal_category_id.asc(),
+            Order.id.asc(),
+        )
+        .all()
+    )
+
+    return {
+        "date": target_date,
+        "total": len(orders),
+        "data": [
+            build_order_payload(order)
+            for order in orders
+        ],
+    }
+
+
+@router.get("/orders/grouped")
+def chef_orders_grouped(
+    target_date: date = Query(
+        default_factory=date.today,
+        alias="date",
+    ),
+    include_completed: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(*CHEF_ROLES)
+    ),
+):
+    query = orders_for_date_query(
+        db,
+        target_date,
+    )
+
+    if not include_completed:
+        query = query.filter(
+            Order.status.in_(KITCHEN_ACTIVE_STATUSES)
+        )
+
+    orders = (
+        query.order_by(
+            Order.delivery_time.asc(),
+            Order.meal_category_id.asc(),
+            Order.id.asc(),
+        )
+        .all()
+    )
+
+    grouped: dict[int, dict] = {}
+
+    for order in orders:
+        category_id = order.meal_category_id
+        category = order.meal_category
+
+        if category_id not in grouped:
+            grouped[category_id] = {
+                "meal_category_id": category_id,
+                "category_name": getattr(
+                    category,
+                    "name_en",
+                    None,
+                ),
+                "category_name_ar": getattr(
+                    category,
+                    "name_ar",
+                    None,
+                ),
+                "order_count": 0,
+                "total_quantity": 0,
+                "orders": [],
+            }
+
+        payload = build_order_payload(order)
+        quantity = sum(
+            max(int(item.get("quantity") or 1), 1)
+            for item in normalize_order_items(
+                order.items
+            )
+        )
+
+        grouped[category_id]["order_count"] += 1
+        grouped[category_id][
+            "total_quantity"
+        ] += quantity
+        grouped[category_id]["orders"].append(
+            payload
+        )
+
+    groups = list(grouped.values())
+    groups.sort(
+        key=lambda item: (
+            item["category_name"] or ""
+        ).lower()
+    )
+
+    return {
+        "date": target_date,
+        "total_orders": len(orders),
+        "groups": groups,
+    }
+
+
+@router.get(
+    "/orders/{order_id}",
+    response_model=ChefOrderResponse,
+)
+def chef_get_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(*CHEF_ROLES)
+    ),
+):
+    return build_order_payload(
+        get_order_or_404(db, order_id)
+    )
+
+
+@router.patch(
+    "/orders/{order_id}/start-preparing",
+    response_model=ChefStatusResponse,
+)
+def chef_start_preparing(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(*CHEF_ROLES)
+    ),
+):
+    order = get_order_or_404(db, order_id)
+
+    if order.status not in {
+        OrderStatus.PENDING,
+        OrderStatus.CONFIRMED,
+    }:
         raise HTTPException(
-            status_code=404,
-            detail="Driver not found or inactive",
+            status_code=409,
+            detail=(
+                "Only pending or confirmed orders can "
+                "start preparation"
+            ),
         )
 
-    unique_order_ids = list(
-        dict.fromkeys(payload.order_ids)
-    )
+    order.status = OrderStatus.PREPARING
+    order.preparation_started_at = datetime.utcnow()
 
-    assignments = []
+    try:
+        db.commit()
+        db.refresh(order)
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "message": "Order preparation started",
+        "order": build_order_payload(order),
+    }
+
+
+@router.patch(
+    "/orders/{order_id}/ready",
+    response_model=ChefStatusResponse,
+)
+def chef_mark_ready(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(*CHEF_ROLES)
+    ),
+):
+    order = get_order_or_404(db, order_id)
+
+    if order.status != OrderStatus.PREPARING:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only preparing orders can be marked "
+                "ready for delivery"
+            ),
+        )
+
+    order.status = OrderStatus.READY_FOR_DELIVERY
+    order.ready_at = datetime.utcnow()
+
+    try:
+        db.commit()
+        db.refresh(order)
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "message": "Order is ready for delivery",
+        "order": build_order_payload(order),
+    }
+
+
+def bulk_change_status(
+    db: Session,
+    order_ids: list[int],
+    *,
+    expected_statuses: set[OrderStatus],
+    new_status: OrderStatus,
+) -> dict:
+    unique_ids = list(dict.fromkeys(order_ids))
+    updated = []
     failures = []
+    now = datetime.utcnow()
 
-    for order_id in unique_order_ids:
+    for order_id in unique_ids:
         order = (
             db.query(Order)
             .filter(Order.id == order_id)
@@ -1109,363 +698,284 @@ def chef_bulk_assign_driver(
             )
             continue
 
+        if order.status not in expected_statuses:
+            failures.append(
+                {
+                    "order_id": order.id,
+                    "reason": (
+                        f"Order status is "
+                        f"{enum_value(order.status)}"
+                    ),
+                }
+            )
+            continue
+
+        order.status = new_status
+
+        if new_status == OrderStatus.PREPARING:
+            order.preparation_started_at = now
+
         if (
-            order.status
-            != OrderStatus.READY_FOR_DELIVERY
+            new_status
+            == OrderStatus.READY_FOR_DELIVERY
         ):
-            failures.append(
-                {
-                    "order_id": order.id,
-                    "reason": (
-                        "Order must be ready_for_delivery "
-                        "before assigning a driver"
-                    ),
-                }
-            )
-            continue
+            order.ready_at = now
 
-        if not order.delivery_address:
-            failures.append(
-                {
-                    "order_id": order.id,
-                    "reason": (
-                        "Order delivery address is missing"
-                    ),
-                }
-            )
-            continue
-
-        try:
-            delivery = assign_order_to_driver(
-                db=db,
-                order=order,
-                driver=driver,
-                scheduled_at=payload.scheduled_at,
-            )
-
-            # Flush so a newly created delivery receives its ID.
-            db.flush()
-
-            assignments.append(
-                {
-                    "order_id": order.id,
-                    "delivery_id": delivery.id,
-                    "driver_id": driver.id,
-                    "order_status": enum_value(
-                        order.status
-                    ),
-                    "delivery_status": enum_value(
-                        delivery.status
-                    ),
-                }
-            )
-
-        except ValueError as exc:
-            failures.append(
-                {
-                    "order_id": order.id,
-                    "reason": str(exc),
-                }
-            )
-
-        except IntegrityError:
-            db.rollback()
-
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "A database conflict occurred while "
-                    "assigning the selected orders"
-                ),
-            )
+        updated.append(
+            {
+                "order_id": order.id,
+                "order_number": order.order_number,
+                "status": new_status,
+            }
+        )
 
     try:
         db.commit()
-    except IntegrityError as exc:
+    except Exception:
         db.rollback()
-
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Bulk driver assignment could not "
-                "be completed"
-            ),
-        ) from exc
+        raise
 
     return {
-        "message": (
-            "Bulk driver assignment completed"
-        ),
-        "driver_id": driver.id,
-        "requested_orders": len(
-            unique_order_ids
-        ),
-        "assigned_orders": len(assignments),
+        "message": "Bulk status update completed",
+        "requested_orders": len(unique_ids),
+        "updated_orders": len(updated),
         "failed_orders": len(failures),
-        "assignments": assignments,
+        "orders": updated,
         "failures": failures,
-    }    
-
-@router.get(
-    "/orders/{order_id}",
-    response_model=ChefOrderResponse,
-)
-def chef_get_order(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
-    ),
-):
-    order = get_order_or_404(
-        db=db,
-        order_id=order_id,
-    )
-
-    return build_order_payload(
-        db=db,
-        order=order,
-    )
-
-
-@router.patch(
-    "/orders/{order_id}/start-preparing",
-    response_model=ChefStatusResponse,
-)
-def chef_start_preparing(
-    order_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
-    ),
-):
-    order = get_order_or_404(
-        db=db,
-        order_id=order_id,
-    )
-
-    allowed_statuses = {
-        OrderStatus.PENDING,
-        OrderStatus.CONFIRMED,
-    }
-
-    if order.status not in allowed_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Only pending or confirmed orders can "
-                "start preparation"
-            ),
-        )
-
-    order.status = OrderStatus.PREPARING
-
-    db.commit()
-    db.refresh(order)
-
-    return {
-        "message": "Order preparation started",
-        "order": build_order_payload(db, order),
     }
 
 
 @router.patch(
-    "/orders/{order_id}/ready",
-    response_model=ChefStatusResponse,
+    "/orders/bulk/start-preparing",
+    response_model=ChefBulkStatusResponse,
 )
-def chef_mark_ready(
-    order_id: int,
+def chef_bulk_start_preparing(
+    payload: ChefBulkStatusRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-        )
+        require_roles(*CHEF_ROLES)
     ),
 ):
-    order = get_order_or_404(
+    return bulk_change_status(
         db=db,
-        order_id=order_id,
+        order_ids=payload.order_ids,
+        expected_statuses={
+            OrderStatus.PENDING,
+            OrderStatus.CONFIRMED,
+        },
+        new_status=OrderStatus.PREPARING,
     )
 
-    if order.status != OrderStatus.PREPARING:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Only an order that is currently preparing "
-                "can be marked ready"
-            ),
-        )
 
-    order.status = OrderStatus.READY_FOR_DELIVERY
-
-    db.commit()
-    db.refresh(order)
-
-    return {
-        "message": "Order is ready for delivery",
-        "order": build_order_payload(db, order),
-    }
+@router.patch(
+    "/orders/bulk/ready",
+    response_model=ChefBulkStatusResponse,
+)
+def chef_bulk_mark_ready(
+    payload: ChefBulkStatusRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(*CHEF_ROLES)
+    ),
+):
+    return bulk_change_status(
+        db=db,
+        order_ids=payload.order_ids,
+        expected_statuses={
+            OrderStatus.PREPARING,
+        },
+        new_status=OrderStatus.READY_FOR_DELIVERY,
+    )
 
 
 @router.get(
-    "/drivers",
-    response_model=list[ChefDriverResponse],
+    "/meals/summary",
+    response_model=ChefMealSummaryResponse,
 )
-def chef_drivers(
+def chef_meal_summary(
+    target_date: date = Query(
+        default_factory=date.today,
+        alias="date",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-            UserRole.DELIVERY_MANAGER,
-        )
+        require_roles(*CHEF_ROLES)
     ),
-    available_only: bool = Query(False),
 ):
-    drivers = (
-        db.query(User)
+    orders = (
+        orders_for_date_query(db, target_date)
         .filter(
-            User.role == UserRole.DRIVER,
-            User.is_active.is_(True),
-        )
-        .order_by(
-            User.first_name.asc(),
-            User.last_name.asc(),
+            Order.status.in_(KITCHEN_ACTIVE_STATUSES)
         )
         .all()
     )
 
-    results = []
+    summary: dict[str, dict] = {}
 
-    for driver in drivers:
-        active_deliveries = (
-            db.query(Delivery)
-            .filter(
-                Delivery.driver_id == driver.id,
-                Delivery.status.in_(
-                    [
-                        DeliveryStatus.ASSIGNED,
-                        DeliveryStatus.PICKED_UP,
-                        DeliveryStatus.OUT_FOR_DELIVERY,
-                    ]
-                ),
+    for order in orders:
+        for item in normalize_order_items(
+            order.items
+        ):
+            meal_id = item.get("meal_id")
+            meal_name = str(
+                item.get("meal_name")
+                or item.get("name_en")
+                or "Unknown meal"
+            ).strip()
+
+            try:
+                quantity = max(
+                    int(item.get("quantity") or 1),
+                    1,
+                )
+            except (TypeError, ValueError):
+                quantity = 1
+
+            key = (
+                f"id:{meal_id}"
+                if meal_id is not None
+                else f"name:{meal_name.lower()}"
             )
-            .count()
+
+            if key not in summary:
+                summary[key] = {
+                    "meal_id": meal_id,
+                    "meal_name": meal_name,
+                    "quantity": 0,
+                }
+
+            summary[key]["quantity"] += quantity
+
+    meals = sorted(
+        summary.values(),
+        key=lambda item: (
+            -item["quantity"],
+            item["meal_name"].lower(),
+        ),
+    )
+
+    return {
+        "date": target_date,
+        "total_orders": len(orders),
+        "total_meals": sum(
+            item["quantity"]
+            for item in meals
+        ),
+        "meals": meals,
+    }
+
+
+@router.get(
+    "/allergies/summary",
+    response_model=ChefAllergySummaryResponse,
+)
+def chef_allergy_summary(
+    target_date: date = Query(
+        default_factory=date.today,
+        alias="date",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(*CHEF_ROLES)
+    ),
+):
+    orders = (
+        orders_for_date_query(db, target_date)
+        .filter(
+            Order.status.in_(KITCHEN_ACTIVE_STATUSES)
+        )
+        .all()
+    )
+
+    user_order_ids: dict[int, list[int]] = (
+        defaultdict(list)
+    )
+
+    for order in orders:
+        user_order_ids[order.user_id].append(
+            order.id
         )
 
-        available = active_deliveries == 0
+    users = []
 
-        if available_only and not available:
+    if user_order_ids:
+        users = (
+            db.query(User)
+            .filter(
+                User.id.in_(
+                    list(user_order_ids.keys())
+                )
+            )
+            .all()
+        )
+
+    allergy_users: dict[str, set[int]] = (
+        defaultdict(set)
+    )
+    allergy_orders: dict[str, set[int]] = (
+        defaultdict(set)
+    )
+    customers = []
+
+    for user in users:
+        allergies = normalize_allergies(
+            getattr(user, "allergies", None)
+        )
+
+        if not allergies:
             continue
 
-        results.append(
+        order_ids = user_order_ids.get(
+            user.id,
+            [],
+        )
+
+        for allergy in allergies:
+            allergy_users[allergy].add(user.id)
+            allergy_orders[allergy].update(
+                order_ids
+            )
+
+        customers.append(
             {
-                "id": driver.id,
-                "first_name": driver.first_name,
-                "last_name": driver.last_name,
+                "user_id": user.id,
                 "full_name": (
-                    f"{driver.first_name} {driver.last_name}"
-                ),
-                "email": driver.email,
-                "phone": driver.phone,
-                "location": getattr(
-                    driver,
-                    "location",
-                    None,
-                ),
-                "is_active": driver.is_active,
-                "active_deliveries": active_deliveries,
-                "available": available,
+                    f"{user.first_name or ''} "
+                    f"{user.last_name or ''}"
+                ).strip(),
+                "phone": user.phone,
+                "allergies": allergies,
+                "order_ids": order_ids,
             }
         )
 
-    return results
-
-
-@router.post(
-    "/orders/{order_id}/assign-driver",
-    response_model=ChefDeliveryAssignmentResponse,
-)
-def chef_assign_driver(
-    order_id: int,
-    payload: AssignChefDriverRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(
-        require_roles(
-            UserRole.CHEF,
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-            UserRole.DELIVERY_MANAGER,
-        )
-    ),
-):
-    order = get_order_or_404(
-        db=db,
-        order_id=order_id,
-    )
-
-    driver = (
-        db.query(User)
-        .filter(
-            User.id == payload.driver_id,
-            User.role == UserRole.DRIVER,
-            User.is_active.is_(True),
-        )
-        .first()
-    )
-
-    if driver is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Driver not found or inactive",
-        )
-
-    try:
-        delivery = assign_order_to_driver(
-            db=db,
-            order=order,
-            driver=driver,
-            scheduled_at=payload.scheduled_at,
-        )
-
-        db.commit()
-        db.refresh(delivery)
-
-    except ValueError as exc:
-        db.rollback()
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
-
-    except IntegrityError as exc:
-        db.rollback()
-
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Driver assignment could not "
-                "be completed"
+    allergy_results = [
+        {
+            "allergy": allergy,
+            "customer_count": len(
+                allergy_users[allergy]
             ),
-        ) from exc
+            "order_count": len(
+                allergy_orders[allergy]
+            ),
+        }
+        for allergy in sorted(
+            allergy_users.keys()
+        )
+    ]
+
+    customers.sort(
+        key=lambda item: item[
+            "full_name"
+        ].lower()
+    )
 
     return {
-        "message": "Driver assigned successfully",
-        "delivery_id": delivery.id,
-        "order_id": order.id,
-        "driver_id": driver.id,
-        "delivery_status": delivery.status,
-        "order_status": order.status,
+        "date": target_date,
+        "total_orders": len(orders),
+        "customers_with_allergies": len(
+            customers
+        ),
+        "allergies": allergy_results,
+        "customers": customers,
     }
