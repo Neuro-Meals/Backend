@@ -1,14 +1,9 @@
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 from pydantic import BaseModel, Field, model_validator
 
 
 class MealAssignmentItemCreate(BaseModel):
-    meal_category_id: int = Field(
-        ...,
-        ge=1,
-    )
-
     meal_id: int = Field(
         ...,
         ge=1,
@@ -26,6 +21,50 @@ class MealAssignmentItemCreate(BaseModel):
     )
 
 
+class MealCategoryAssignmentCreate(BaseModel):
+    meal_category_id: int = Field(
+        ...,
+        ge=1,
+    )
+
+    delivery_preference_id: int = Field(
+        ...,
+        ge=1,
+    )
+
+    driver_id: int = Field(
+        ...,
+        ge=1,
+    )
+
+    delivery_time: time
+
+    notes: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+    meals: list[MealAssignmentItemCreate] = Field(
+        ...,
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_meals(self):
+        meal_ids = [
+            item.meal_id
+            for item in self.meals
+        ]
+
+        if len(meal_ids) != len(set(meal_ids)):
+            raise ValueError(
+                "The same meal cannot be selected more than once "
+                "inside one meal category"
+            )
+
+        return self
+
+
 class MealAssignmentBatchCreate(BaseModel):
     user_id: int = Field(
         ...,
@@ -39,7 +78,7 @@ class MealAssignmentBatchCreate(BaseModel):
 
     delivery_date: date
 
-    assignments: list[MealAssignmentItemCreate] = Field(
+    assignments: list[MealCategoryAssignmentCreate] = Field(
         ...,
         min_length=1,
     )
@@ -53,20 +92,21 @@ class MealAssignmentBatchCreate(BaseModel):
 
         if len(category_ids) != len(set(category_ids)):
             raise ValueError(
-                "The same meal category cannot be submitted more than once"
+                "The same meal category cannot be submitted "
+                "more than once for the same delivery date"
             )
 
         return self
 
 
-class MealAssignmentUpdate(BaseModel):
-    meal_id: int | None = Field(
-        default=None,
+class MealAssignmentItemUpdate(BaseModel):
+    meal_id: int = Field(
+        ...,
         ge=1,
     )
 
-    quantity: int | None = Field(
-        default=None,
+    quantity: int = Field(
+        default=1,
         ge=1,
         le=20,
     )
@@ -76,7 +116,64 @@ class MealAssignmentUpdate(BaseModel):
         max_length=500,
     )
 
+
+class MealAssignmentUpdate(BaseModel):
+    delivery_preference_id: int | None = Field(
+        default=None,
+        ge=1,
+    )
+
+    driver_id: int | None = Field(
+        default=None,
+        ge=1,
+    )
+
+    delivery_time: time | None = None
+
+    notes: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
     is_active: bool | None = None
+
+    meals: list[MealAssignmentItemUpdate] | None = Field(
+        default=None,
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_meals(self):
+        if self.meals is None:
+            return self
+
+        meal_ids = [
+            item.meal_id
+            for item in self.meals
+        ]
+
+        if len(meal_ids) != len(set(meal_ids)):
+            raise ValueError(
+                "The same meal cannot be selected more than once"
+            )
+
+        return self
+
+
+class MealAssignmentDriverUpdate(BaseModel):
+    driver_id: int = Field(
+        ...,
+        ge=1,
+    )
+
+
+class MealAssignmentDeliveryUpdate(BaseModel):
+    delivery_preference_id: int = Field(
+        ...,
+        ge=1,
+    )
+
+    delivery_time: time | None = None
 
 
 class MealCategorySummary(BaseModel):
@@ -84,6 +181,10 @@ class MealCategorySummary(BaseModel):
     name_en: str
     name_ar: str | None = None
     image_url: str | None = None
+
+    model_config = {
+        "from_attributes": True,
+    }
 
 
 class MealSummary(BaseModel):
@@ -120,12 +221,52 @@ class MealSummary(BaseModel):
         default_factory=list,
     )
 
+    model_config = {
+        "from_attributes": True,
+    }
+
+
+class MealAssignmentItemResponse(BaseModel):
+    id: int
+    meal_assignment_id: int
+    meal_id: int
+
+    quantity: int
+    notes: str | None = None
+
+    created_at: datetime
+    updated_at: datetime
+
+    meal: MealSummary | None = None
+
+    model_config = {
+        "from_attributes": True,
+    }
+
 
 class AssignedBySummary(BaseModel):
     id: int
     first_name: str
     last_name: str
     role: str
+
+    model_config = {
+        "from_attributes": True,
+    }
+
+
+class DriverSummary(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: str
+    phone: str | None = None
+    role: str
+    is_active: bool
+
+    model_config = {
+        "from_attributes": True,
+    }
 
 
 class CustomerSummary(BaseModel):
@@ -142,6 +283,10 @@ class CustomerSummary(BaseModel):
     dietary_preference: str | None = None
     fitness_goal: str | None = None
 
+    model_config = {
+        "from_attributes": True,
+    }
+
 
 class SubscriptionSummary(BaseModel):
     id: int
@@ -151,6 +296,35 @@ class SubscriptionSummary(BaseModel):
     start_date: datetime | None = None
     end_date: datetime | None = None
 
+    model_config = {
+        "from_attributes": True,
+    }
+
+
+class DeliveryPreferenceSummary(BaseModel):
+    id: int
+    user_id: int
+    meal_category_id: int
+
+    place_type: str | None = None
+    place_name: str | None = None
+
+    city: str | None = None
+    delivery_area: str | None = None
+    delivery_address: str | None = None
+
+    latitude: float | None = None
+    longitude: float | None = None
+
+    preferred_delivery_time: time | None = None
+    delivery_note: str | None = None
+
+    is_active: bool
+
+    model_config = {
+        "from_attributes": True,
+    }
+
 
 class MealAssignmentResponse(BaseModel):
     id: int
@@ -158,12 +332,14 @@ class MealAssignmentResponse(BaseModel):
     user_id: int
     subscription_id: int
     meal_category_id: int
-    meal_id: int
+
+    delivery_preference_id: int
+    driver_id: int
 
     delivery_date: date
+    delivery_time: time
 
-    quantity: int
-    notes: str | None
+    notes: str | None = None
 
     assigned_by: int
     is_active: bool
@@ -172,13 +348,23 @@ class MealAssignmentResponse(BaseModel):
     updated_at: datetime
 
     category: MealCategorySummary | None = None
-    meal: MealSummary | None = None
+
+    meals: list[MealAssignmentItemResponse] = Field(
+        default_factory=list,
+    )
+
     customer: CustomerSummary | None = None
+    driver: DriverSummary | None = None
     assigned_by_user: AssignedBySummary | None = None
     subscription: SubscriptionSummary | None = None
 
-    class Config:
-        from_attributes = True
+    delivery_preference: (
+        DeliveryPreferenceSummary | None
+    ) = None
+
+    model_config = {
+        "from_attributes": True,
+    }
 
 
 class MealAssignmentDateGroup(BaseModel):
@@ -223,13 +409,25 @@ class KitchenMealSummary(BaseModel):
     customer_count: int
 
 
+class KitchenCategorySummary(BaseModel):
+    meal_category_id: int
+    category_name: str
+    category_name_ar: str | None = None
+
+    assignment_count: int
+    customer_count: int
+    total_meal_quantity: int
+
+    meals: list[KitchenMealSummary]
+
+
 class KitchenDailyResponse(BaseModel):
     delivery_date: date
     total_assignments: int
     total_customers: int
     total_meal_quantity: int
 
-    meals: list[KitchenMealSummary]
+    categories: list[KitchenCategorySummary]
     assignments: list[MealAssignmentResponse]
 
 
