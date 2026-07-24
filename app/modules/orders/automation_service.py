@@ -1,125 +1,135 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import date, datetime, time
+from datetime import date, datetime
 from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.modules.meal_assignments.models import MealAssignment
-from app.modules.meals.models import Meal, MealCategory
+from app.modules.meal_assignments.models import (
+    MealAssignment,
+    MealAssignmentItem,
+)
 from app.modules.orders.models import (
     Order,
     OrderSource,
     OrderStatus,
 )
-from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import (
     PaymentStatus,
     Subscription,
     SubscriptionStatus,
 )
-from app.modules.users.models import (
-    User,
-    UserCategoryDeliveryPreference,
-)
+from app.modules.users.models import User
 
 
 def enum_value(value):
-    """
-    Convert a Python enum or SQLAlchemy enum to a plain value.
-    """
-
     if value is None:
         return None
-
     if hasattr(value, "value"):
         return value.value
-
     return str(value)
 
 
-def normalize_service_datetime(
-    target_date: date,
-) -> datetime:
-    """
-    Store the order delivery date at midnight.
-
-    This keeps duplicate checks predictable because the
-    orders table uses DateTime for delivery_date.
-    """
-
-    return datetime.combine(
-        target_date,
-        time.min,
-    )
+def value_is_equal(value, expected) -> bool:
+    left = enum_value(value)
+    right = enum_value(expected)
+    if left is None or right is None:
+        return left == right
+    return str(left).strip().lower() == str(right).strip().lower()
 
 
-def create_order_number(
-    target_date: date,
-) -> str:
-    """
-    Example:
+def date_only(value) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return None
 
-    NM-20260725-A1B2C3D4
-    """
 
-    random_part = uuid4().hex[:8].upper()
+def create_order_number(target_date: date) -> str:
+    return f"NM-{target_date.strftime('%Y%m%d')}-{uuid4().hex[:8].upper()}"
 
-    return (
-        f"NM-{target_date.strftime('%Y%m%d')}-"
-        f"{random_part}"
-    )
+
+def full_name(user: User | None) -> str | None:
+    if user is None:
+        return None
+    name = " ".join(
+        part
+        for part in [
+            getattr(user, "first_name", None),
+            getattr(user, "last_name", None),
+        ]
+        if part
+    ).strip()
+    return name or None
 
 
 def subscription_is_valid_for_date(
     subscription: Subscription,
     target_date: date,
 ) -> bool:
-    """
-    Check whether a subscription is valid for the
-    requested order date.
-    """
-
-    if subscription.status != SubscriptionStatus.ACTIVE:
+    if not value_is_equal(subscription.status, SubscriptionStatus.ACTIVE):
+        return False
+    if not value_is_equal(subscription.payment_status, PaymentStatus.PAID):
         return False
 
-    if subscription.payment_status != PaymentStatus.PAID:
+    start_date = date_only(getattr(subscription, "start_date", None))
+    end_date = date_only(getattr(subscription, "end_date", None))
+
+    if start_date is not None and start_date > target_date:
         return False
-
-    if subscription.start_date:
-        if subscription.start_date.date() > target_date:
-            return False
-
-    if subscription.end_date:
-        if subscription.end_date.date() < target_date:
-            return False
-
+    if end_date is not None and end_date < target_date:
+        return False
     return True
 
 
-def get_existing_daily_order(
-    db: Session,
-    subscription_id: int,
-    target_date: date,
-) -> Order | None:
-    """
-    Find an existing order for the same subscription
-    and delivery date.
-    """
-
-    normalized_date = normalize_service_datetime(
-        target_date
+def assignment_query(db: Session):
+    return (
+        db.query(MealAssignment)
+        .options(
+            selectinload(MealAssignment.items).selectinload(
+                MealAssignmentItem.meal
+            ),
+            selectinload(MealAssignment.category),
+            selectinload(MealAssignment.customer),
+            selectinload(MealAssignment.driver),
+            selectinload(MealAssignment.subscription),
+            selectinload(MealAssignment.delivery_preference),
+        )
     )
 
+
+def get_assignment_by_id(
+    db: Session,
+    assignment_id: int,
+) -> MealAssignment | None:
     return (
-        db.query(Order)
-        .filter(
-            Order.subscription_id == subscription_id,
-            Order.delivery_date == normalized_date,
-        )
+        assignment_query(db)
+        .filter(MealAssignment.id == assignment_id)
         .first()
+    )
+
+
+def get_active_assignments_for_date(
+    db: Session,
+    target_date: date,
+) -> list[MealAssignment]:
+    return (
+        assignment_query(db)
+        .filter(
+            MealAssignment.delivery_date == target_date,
+            MealAssignment.is_active.is_(True),
+        )
+        .order_by(
+            MealAssignment.subscription_id.asc(),
+            MealAssignment.delivery_time.asc(),
+            MealAssignment.meal_category_id.asc(),
+            MealAssignment.id.asc(),
+        )
+        .all()
     )
 
 
@@ -128,21 +138,15 @@ def get_active_assignments(
     subscription_id: int,
     target_date: date,
 ) -> list[MealAssignment]:
-    """
-    Return active meal assignments for one subscription
-    and one delivery date.
-    """
-
     return (
-        db.query(MealAssignment)
+        assignment_query(db)
         .filter(
-            MealAssignment.subscription_id
-            == subscription_id,
-            MealAssignment.delivery_date
-            == target_date,
+            MealAssignment.subscription_id == subscription_id,
+            MealAssignment.delivery_date == target_date,
             MealAssignment.is_active.is_(True),
         )
         .order_by(
+            MealAssignment.delivery_time.asc(),
             MealAssignment.meal_category_id.asc(),
             MealAssignment.id.asc(),
         )
@@ -150,493 +154,283 @@ def get_active_assignments(
     )
 
 
-def get_delivery_preference(
+def get_existing_order_for_assignment(
     db: Session,
-    user_id: int,
-    meal_category_id: int,
-) -> UserCategoryDeliveryPreference | None:
-    """
-    Return the active delivery preference configured by
-    the customer for a particular meal category.
-    """
-
+    meal_assignment_id: int,
+) -> Order | None:
     return (
-        db.query(UserCategoryDeliveryPreference)
-        .filter(
-            UserCategoryDeliveryPreference.user_id
-            == user_id,
-            UserCategoryDeliveryPreference.meal_category_id
-            == meal_category_id,
-            UserCategoryDeliveryPreference.is_active.is_(
-                True
-            ),
-        )
-        .order_by(
-            UserCategoryDeliveryPreference.id.desc()
-        )
+        db.query(Order)
+        .filter(Order.meal_assignment_id == meal_assignment_id)
         .first()
     )
 
 
-def build_delivery_snapshot(
-    preference: UserCategoryDeliveryPreference | None,
-    user: User,
-) -> dict:
-    """
-    Build a delivery-location snapshot.
+def get_existing_daily_order(
+    db: Session,
+    subscription_id: int,
+    target_date: date,
+) -> Order | None:
+    return (
+        db.query(Order)
+        .filter(
+            Order.subscription_id == subscription_id,
+            Order.delivery_date == target_date,
+        )
+        .order_by(Order.id.asc())
+        .first()
+    )
 
-    The snapshot is stored inside Order.items so future
-    profile changes do not change existing orders.
-    """
 
-    if preference is not None:
+def build_delivery_snapshot(assignment: MealAssignment) -> dict:
+    preference = assignment.delivery_preference
+
+    if preference is None:
         return {
-            "delivery_preference_id": preference.id,
-            "place_type": enum_value(
-                preference.place_type
-            ),
-            "place_name": preference.place_name,
-            "city": preference.city,
-            "delivery_area": preference.delivery_area,
-            "delivery_address": (
-                preference.delivery_address
-            ),
-            "latitude": preference.latitude,
-            "longitude": preference.longitude,
+            "delivery_preference_id": assignment.delivery_preference_id,
+            "place_type": None,
+            "place_name": None,
+            "city": None,
+            "delivery_area": None,
+            "delivery_address": None,
+            "latitude": None,
+            "longitude": None,
             "preferred_delivery_time": (
-                preference.preferred_delivery_time.isoformat()
-                if preference.preferred_delivery_time
+                assignment.delivery_time.isoformat()
+                if assignment.delivery_time
                 else None
             ),
-            "delivery_note": preference.delivery_note,
+            "delivery_note": assignment.notes,
         }
 
+    preferred_time = getattr(preference, "preferred_delivery_time", None)
+
     return {
-        "delivery_preference_id": None,
-        "place_type": None,
-        "place_name": None,
-        "city": user.location,
-        "delivery_area": None,
-        "delivery_address": user.address,
-        "latitude": None,
-        "longitude": None,
-        "preferred_delivery_time": None,
-        "delivery_note": None,
+        "delivery_preference_id": preference.id,
+        "place_type": enum_value(getattr(preference, "place_type", None)),
+        "place_name": getattr(preference, "place_name", None),
+        "city": getattr(preference, "city", None),
+        "delivery_area": getattr(preference, "delivery_area", None),
+        "delivery_address": getattr(preference, "delivery_address", None),
+        "latitude": getattr(preference, "latitude", None),
+        "longitude": getattr(preference, "longitude", None),
+        "preferred_delivery_time": (
+            preferred_time.isoformat()
+            if preferred_time
+            else (
+                assignment.delivery_time.isoformat()
+                if assignment.delivery_time
+                else None
+            )
+        ),
+        "delivery_note": (
+            assignment.notes
+            or getattr(preference, "delivery_note", None)
+        ),
     }
 
 
-def build_assignment_order_item(
-    db: Session,
-    assignment: MealAssignment,
-    user: User,
+def build_driver_snapshot(assignment: MealAssignment) -> dict:
+    driver = assignment.driver
+    return {
+        "driver_id": assignment.driver_id,
+        "driver_name": full_name(driver),
+        "driver_phone": getattr(driver, "phone", None) if driver else None,
+        "driver_email": getattr(driver, "email", None) if driver else None,
+    }
+
+
+def build_customer_snapshot(assignment: MealAssignment) -> dict:
+    customer = assignment.customer
+    return {
+        "user_id": assignment.user_id,
+        "customer_name": full_name(customer),
+        "customer_phone": getattr(customer, "phone", None) if customer else None,
+        "customer_email": getattr(customer, "email", None) if customer else None,
+        "allergies": getattr(customer, "allergies", None) or [] if customer else [],
+        "dietary_preference": (
+            getattr(customer, "dietary_preference", None)
+            if customer
+            else None
+        ),
+    }
+
+
+def build_category_snapshot(assignment: MealAssignment) -> dict:
+    category = assignment.category
+    return {
+        "meal_category_id": assignment.meal_category_id,
+        "category_name": getattr(category, "name_en", None) if category else None,
+        "category_name_ar": getattr(category, "name_ar", None) if category else None,
+    }
+
+
+def build_meal_item_snapshot(
+    assignment_item: MealAssignmentItem,
 ) -> dict | None:
-    """
-    Build one immutable Order.items snapshot from one
-    MealAssignment.
-    """
-
-    meal = (
-        db.query(Meal)
-        .filter(
-            Meal.id == assignment.meal_id
-        )
-        .first()
-    )
-
+    meal = assignment_item.meal
     if meal is None:
         return None
 
-    category = (
-        db.query(MealCategory)
-        .filter(
-            MealCategory.id
-            == assignment.meal_category_id
-        )
-        .first()
-    )
-
-    delivery_preference = get_delivery_preference(
-        db=db,
-        user_id=user.id,
-        meal_category_id=assignment.meal_category_id,
-    )
-
-    delivery_snapshot = build_delivery_snapshot(
-        preference=delivery_preference,
-        user=user,
-    )
-
-    quantity = max(
-        int(assignment.quantity or 1),
-        1,
-    )
-
-    unit_price = float(
-        meal.price or 0
-    )
+    quantity = max(int(assignment_item.quantity or 1), 1)
+    unit_price = float(getattr(meal, "price", 0) or 0)
 
     return {
-        "assignment_id": assignment.id,
+        "meal_assignment_item_id": assignment_item.id,
         "meal_id": meal.id,
-        "meal_category_id": (
-            assignment.meal_category_id
-        ),
-        "meal_name": meal.name_en,
-        "meal_name_ar": meal.name_ar,
-        "category_name": (
-            category.name_en
-            if category
-            else None
-        ),
-        "category_name_ar": (
-            category.name_ar
-            if category
-            else None
-        ),
+        "meal_name": getattr(meal, "name_en", None),
+        "meal_name_ar": getattr(meal, "name_ar", None),
+        "description": getattr(meal, "description", None),
         "quantity": quantity,
         "unit_price": unit_price,
-        "line_total": round(
-            unit_price * quantity,
-            2,
-        ),
-        "calories": meal.calories,
-        "protein_g": meal.protein_g,
-        "carbs_g": meal.carbs_g,
-        "fat_g": meal.fat_g,
-        "fiber_g": meal.fiber_g,
-        "sugar_g": meal.sugar_g,
-        "sodium_mg": meal.sodium_mg,
-        "ingredients": meal.ingredients or [],
-        "allergens": meal.allergens or [],
-        "diet_tags": meal.diet_tags or [],
-        "image_url": meal.image_url,
-        "assignment_notes": assignment.notes,
-        "delivery": delivery_snapshot,
+        "line_total": round(unit_price * quantity, 2),
+        "calories": getattr(meal, "calories", None),
+        "protein_g": getattr(meal, "protein_g", getattr(meal, "protein", None)),
+        "carbs_g": getattr(meal, "carbs_g", getattr(meal, "carbs", None)),
+        "fat_g": getattr(meal, "fat_g", getattr(meal, "fat", None)),
+        "fiber_g": getattr(meal, "fiber_g", None),
+        "sugar_g": getattr(meal, "sugar_g", None),
+        "sodium_mg": getattr(meal, "sodium_mg", None),
+        "ingredients": getattr(meal, "ingredients", None) or [],
+        "allergens": getattr(meal, "allergens", None) or [],
+        "diet_tags": getattr(meal, "diet_tags", None) or [],
+        "image_url": getattr(meal, "image_url", None),
+        "notes": assignment_item.notes,
     }
 
 
-def build_subscription_order_items(
-    db: Session,
-    subscription: Subscription,
-    target_date: date,
+def build_assignment_order_items(
+    assignment: MealAssignment,
 ) -> list[dict]:
-    """
-    Build order items from MealAssignment records.
-
-    This function replaces the old PlanMenuItem logic.
-    """
-
-    user = (
-        db.query(User)
-        .filter(
-            User.id == subscription.user_id
-        )
-        .first()
-    )
-
-    if user is None:
-        return []
-
-    assignments = get_active_assignments(
-        db=db,
-        subscription_id=subscription.id,
-        target_date=target_date,
-    )
-
     items = []
-
-    for assignment in assignments:
-        item = build_assignment_order_item(
-            db=db,
-            assignment=assignment,
-            user=user,
-        )
-
-        if item is not None:
-            items.append(item)
-
+    for assignment_item in assignment.items or []:
+        snapshot = build_meal_item_snapshot(assignment_item)
+        if snapshot is not None:
+            items.append(snapshot)
     return items
 
 
-def calculate_order_total(
-    items: list[dict],
-) -> float:
-    """
-    Calculate the informational meal value.
-
-    The customer already paid for the subscription, so this
-    amount is mainly useful for reports and kitchen costing.
-    """
-
-    total = sum(
-        float(item.get("line_total") or 0)
-        for item in items
+def calculate_order_total(items: list[dict]) -> float:
+    return round(
+        sum(float(item.get("line_total") or 0) for item in items),
+        2,
     )
 
-    return round(total, 2)
 
+def order_has_delivery_location(assignment_or_items) -> bool:
+    if isinstance(assignment_or_items, MealAssignment):
+        delivery = build_delivery_snapshot(assignment_or_items)
+        return bool(delivery.get("delivery_address"))
 
-def get_unique_delivery_snapshots(
-    items: list[dict],
-) -> list[dict]:
-    """
-    Return unique delivery destinations used by the
-    assigned meal categories.
-    """
-
-    unique_locations = {}
-
-    for item in items:
-        delivery = item.get("delivery") or {}
-
-        location_key = (
-            delivery.get("delivery_preference_id"),
-            delivery.get("place_type"),
-            delivery.get("place_name"),
-            delivery.get("city"),
-            delivery.get("delivery_area"),
-            delivery.get("delivery_address"),
-            delivery.get("latitude"),
-            delivery.get("longitude"),
-            delivery.get("preferred_delivery_time"),
-        )
-
-        unique_locations[location_key] = delivery
-
-    return list(unique_locations.values())
-
-
-def build_order_level_delivery(
-    items: list[dict],
-) -> dict:
-    """
-    Build order-level delivery fields.
-
-    A customer can use different destinations for breakfast,
-    lunch and dinner. Detailed destinations remain inside
-    each order item.
-
-    When every item uses the same destination, that
-    destination is copied to the main order fields.
-    """
-
-    delivery_locations = get_unique_delivery_snapshots(
-        items
-    )
-
-    if not delivery_locations:
-        return {
-            "delivery_preference_id": None,
-            "delivery_place_type": None,
-            "delivery_place_name": None,
-            "delivery_city": None,
-            "delivery_area": None,
-            "delivery_address": None,
-            "delivery_latitude": None,
-            "delivery_longitude": None,
-            "delivery_notes": None,
-            "location_count": 0,
-        }
-
-    if len(delivery_locations) == 1:
-        delivery = delivery_locations[0]
-
-        return {
-            "delivery_preference_id": delivery.get(
-                "delivery_preference_id"
-            ),
-            "delivery_place_type": delivery.get(
-                "place_type"
-            ),
-            "delivery_place_name": delivery.get(
-                "place_name"
-            ),
-            "delivery_city": delivery.get("city"),
-            "delivery_area": delivery.get(
-                "delivery_area"
-            ),
-            "delivery_address": delivery.get(
-                "delivery_address"
-            ),
-            "delivery_latitude": delivery.get(
-                "latitude"
-            ),
-            "delivery_longitude": delivery.get(
-                "longitude"
-            ),
-            "delivery_notes": delivery.get(
-                "delivery_note"
-            ),
-            "location_count": 1,
-        }
-
-    return {
-        "delivery_preference_id": None,
-        "delivery_place_type": "multiple",
-        "delivery_place_name": (
-            "Multiple delivery locations"
-        ),
-        "delivery_city": None,
-        "delivery_area": None,
-        "delivery_address": (
-            "Multiple delivery locations. "
-            "See each order item for delivery details."
-        ),
-        "delivery_latitude": None,
-        "delivery_longitude": None,
-        "delivery_notes": (
-            "This order contains meals assigned to "
-            "different delivery locations."
-        ),
-        "location_count": len(
-            delivery_locations
-        ),
-    }
-
-
-def order_has_delivery_location(
-    items: list[dict],
-) -> bool:
-    """
-    Ensure every assigned meal has at least one delivery
-    address.
-
-    The category preference is used first. The customer's
-    general address is used as a fallback.
-    """
-
+    items = assignment_or_items or []
     if not items:
         return False
 
     for item in items:
         delivery = item.get("delivery") or {}
-
         if not delivery.get("delivery_address"):
             return False
-
     return True
 
 
-def create_daily_order_for_subscription(
+def create_order_for_assignment(
     db: Session,
-    subscription: Subscription,
-    target_date: date,
+    assignment: MealAssignment,
+    *,
+    commit: bool = True,
 ) -> tuple[Order | None, str]:
-    """
-    Possible outcomes:
+    if not assignment.is_active:
+        return None, "inactive_assignment"
 
-    created
-    already_exists
-    no_assignments
-    invalid_subscription
-    user_not_found
-    missing_delivery_location
-    """
+    existing_order = get_existing_order_for_assignment(
+        db=db,
+        meal_assignment_id=assignment.id,
+    )
+    if existing_order is not None:
+        return existing_order, "already_exists"
+
+    subscription = assignment.subscription
+    if subscription is None:
+        subscription = (
+            db.query(Subscription)
+            .filter(Subscription.id == assignment.subscription_id)
+            .first()
+        )
+
+    if subscription is None:
+        return None, "invalid_subscription"
 
     if not subscription_is_valid_for_date(
         subscription=subscription,
-        target_date=target_date,
+        target_date=assignment.delivery_date,
     ):
         return None, "invalid_subscription"
 
-    existing_order = get_existing_daily_order(
-        db=db,
-        subscription_id=subscription.id,
-        target_date=target_date,
-    )
+    if assignment.customer is None:
+        return None, "missing_customer"
+    if assignment.driver is None:
+        return None, "missing_driver"
+    if assignment.delivery_preference is None:
+        return None, "missing_delivery_preference"
+    if assignment.delivery_time is None:
+        return None, "missing_delivery_time"
 
-    if existing_order:
-        return existing_order, "already_exists"
+    order_items = build_assignment_order_items(assignment)
+    if not order_items:
+        return None, "no_meals"
 
-    user = (
-        db.query(User)
-        .filter(
-            User.id == subscription.user_id
-        )
-        .first()
-    )
-
-    if user is None:
-        return None, "user_not_found"
-
-    items = build_subscription_order_items(
-        db=db,
-        subscription=subscription,
-        target_date=target_date,
-    )
-
-    if not items:
-        return None, "no_assignments"
-
-    if not order_has_delivery_location(items):
+    delivery = build_delivery_snapshot(assignment)
+    if not delivery.get("delivery_address"):
         return None, "missing_delivery_location"
 
-    plan = (
-        db.query(MealPlan)
-        .filter(
-            MealPlan.id == subscription.plan_id
-        )
-        .first()
-    )
+    category_snapshot = build_category_snapshot(assignment)
+    driver_snapshot = build_driver_snapshot(assignment)
+    customer_snapshot = build_customer_snapshot(assignment)
 
-    delivery_data = build_order_level_delivery(
-        items
+    snapshot_items = [
+        {
+            **item,
+            "meal_assignment_id": assignment.id,
+            **category_snapshot,
+            "delivery": delivery,
+            "driver": driver_snapshot,
+            "customer": customer_snapshot,
+            "assignment_notes": assignment.notes,
+        }
+        for item in order_items
+    ]
+
+    initial_status = (
+        OrderStatus.CONFIRMED
+        if assignment.delivery_date <= date.today()
+        else OrderStatus.SCHEDULED
     )
 
     order = Order(
-        user_id=subscription.user_id,
-        subscription_id=subscription.id,
-        plan_id=subscription.plan_id,
-        order_number=create_order_number(
-            target_date
-        ),
+        order_number=create_order_number(assignment.delivery_date),
+        user_id=assignment.user_id,
+        subscription_id=assignment.subscription_id,
+        plan_id=getattr(subscription, "plan_id", None),
+        meal_assignment_id=assignment.id,
+        meal_category_id=assignment.meal_category_id,
+        driver_id=assignment.driver_id,
+        delivery_preference_id=assignment.delivery_preference_id,
         source=OrderSource.AUTOMATIC,
-        status=(
-            OrderStatus.CONFIRMED
-            if target_date == date.today()
-            else OrderStatus.SCHEDULED
-        ),
-        total_amount=calculate_order_total(
-            items
-        ),
-        delivery_date=normalize_service_datetime(
-            target_date
-        ),
-        delivery_preference_id=delivery_data[
-            "delivery_preference_id"
-        ],
-        delivery_place_type=delivery_data[
-            "delivery_place_type"
-        ],
-        delivery_place_name=delivery_data[
-            "delivery_place_name"
-        ],
-        delivery_city=delivery_data[
-            "delivery_city"
-        ],
-        delivery_area=delivery_data[
-            "delivery_area"
-        ],
-        delivery_address=delivery_data[
-            "delivery_address"
-        ],
-        delivery_latitude=delivery_data[
-            "delivery_latitude"
-        ],
-        delivery_longitude=delivery_data[
-            "delivery_longitude"
-        ],
-        delivery_notes=(
-            delivery_data["delivery_notes"]
-            or (
-                "Automatically generated from "
-                f"{plan.name_en if plan else 'subscription'}"
-            )
-        ),
-        items=items,
+        status=initial_status,
+        delivery_date=assignment.delivery_date,
+        delivery_time=assignment.delivery_time,
+        total_amount=calculate_order_total(order_items),
+        items=snapshot_items,
+        delivery_place_type=delivery.get("place_type"),
+        delivery_place_name=delivery.get("place_name"),
+        delivery_city=delivery.get("city"),
+        delivery_area=delivery.get("delivery_area"),
+        delivery_address=delivery["delivery_address"],
+        delivery_latitude=delivery.get("latitude"),
+        delivery_longitude=delivery.get("longitude"),
+        delivery_notes=delivery.get("delivery_note"),
         confirmed_at=(
             datetime.utcnow()
-            if target_date == date.today()
+            if initial_status == OrderStatus.CONFIRMED
             else None
         ),
     )
@@ -644,96 +438,90 @@ def create_daily_order_for_subscription(
     db.add(order)
 
     try:
-        db.commit()
-
+        if commit:
+            db.commit()
+            db.refresh(order)
+        else:
+            db.flush()
     except IntegrityError:
         db.rollback()
-
-        existing_order = get_existing_daily_order(
+        existing_order = get_existing_order_for_assignment(
             db=db,
-            subscription_id=subscription.id,
-            target_date=target_date,
+            meal_assignment_id=assignment.id,
         )
-
-        if existing_order:
-            return (
-                existing_order,
-                "already_exists",
-            )
-
+        if existing_order is not None:
+            return existing_order, "already_exists"
         raise
-
-    db.refresh(order)
 
     return order, "created"
 
 
-def confirm_scheduled_orders_for_date(
+def create_daily_order_for_subscription(
     db: Session,
+    subscription: Subscription,
     target_date: date,
-) -> dict:
-    """
-    Move scheduled orders to confirmed.
-    """
+) -> tuple[Order | None, str]:
+    if not subscription_is_valid_for_date(subscription, target_date):
+        return None, "invalid_subscription"
 
-    service_datetime = normalize_service_datetime(
-        target_date
+    assignments = get_active_assignments(
+        db=db,
+        subscription_id=subscription.id,
+        target_date=target_date,
     )
+    if not assignments:
+        return None, "no_assignments"
 
-    orders = (
-        db.query(Order)
-        .filter(
-            Order.delivery_date
-            == service_datetime,
-            Order.status
-            == OrderStatus.SCHEDULED,
-        )
-        .all()
-    )
+    first_order = None
+    created_count = 0
 
-    confirmation_time = datetime.utcnow()
+    for assignment in assignments:
+        order, outcome = create_order_for_assignment(db, assignment)
+        if order is not None and first_order is None:
+            first_order = order
+        if outcome == "created":
+            created_count += 1
 
-    for order in orders:
-        order.status = OrderStatus.CONFIRMED
-        order.confirmed_at = confirmation_time
+    if created_count > 0:
+        return first_order, "created"
+    if first_order is not None:
+        return first_order, "already_exists"
+    return None, "no_orders_created"
 
-    db.commit()
 
-    return {
-        "target_date": target_date,
-        "orders_confirmed": len(orders),
-        "order_ids": [
-            order.id
-            for order in orders
-        ],
+def outcome_message(outcome: str) -> str:
+    messages = {
+        "already_exists": "An order already exists for this meal assignment",
+        "inactive_assignment": "Meal assignment is inactive",
+        "invalid_subscription": "Subscription is missing, unpaid, inactive, or outside its valid date range",
+        "no_meals": "Meal assignment contains no valid meal items",
+        "missing_customer": "Customer record was not found",
+        "missing_driver": "Assigned driver was not found",
+        "missing_delivery_preference": "Selected delivery preference was not found",
+        "missing_delivery_location": "Selected delivery preference has no address",
+        "missing_delivery_time": "Meal assignment has no delivery time",
     }
+    return messages.get(outcome, outcome.replace("_", " ").capitalize())
 
 
-def get_subscription_ids_with_assignments(
-    db: Session,
-    target_date: date,
-) -> set[int]:
-    """
-    Return subscriptions that have active meal assignments
-    for the target date.
-    """
-
-    rows = (
-        db.query(
-            MealAssignment.subscription_id
-        )
-        .filter(
-            MealAssignment.delivery_date
-            == target_date,
-            MealAssignment.is_active.is_(True),
-        )
-        .distinct()
-        .all()
-    )
-
+def serialize_created_order(order: Order) -> dict:
+    items = order.items or []
     return {
-        row.subscription_id
-        for row in rows
+        "order_id": order.id,
+        "order_number": order.order_number,
+        "meal_assignment_id": order.meal_assignment_id,
+        "subscription_id": order.subscription_id,
+        "user_id": order.user_id,
+        "plan_id": order.plan_id,
+        "meal_category_id": order.meal_category_id,
+        "driver_id": order.driver_id,
+        "delivery_preference_id": order.delivery_preference_id,
+        "delivery_date": order.delivery_date,
+        "delivery_time": order.delivery_time,
+        "status": enum_value(order.status),
+        "meal_items": len(items),
+        "total_quantity": sum(int(item.get("quantity") or 1) for item in items),
+        "total_amount": order.total_amount,
     }
 
 
@@ -741,330 +529,234 @@ def generate_orders_for_date(
     db: Session,
     target_date: date,
 ) -> dict:
-    """
-    Generate daily orders from MealAssignment records.
-    """
-
-    subscriptions = (
-        db.query(Subscription)
-        .filter(
-            Subscription.status
-            == SubscriptionStatus.ACTIVE,
-            Subscription.payment_status
-            == PaymentStatus.PAID,
-        )
-        .order_by(
-            Subscription.id.asc()
-        )
-        .all()
-    )
-
-    subscriptions_with_assignments = (
-        get_subscription_ids_with_assignments(
-            db=db,
-            target_date=target_date,
-        )
-    )
+    assignments = get_active_assignments_for_date(db, target_date)
 
     result = {
         "target_date": target_date,
-        "subscriptions_checked": len(
-            subscriptions
-        ),
-        "subscriptions_with_assignments": len(
-            subscriptions_with_assignments
-        ),
+        "assignments_checked": len(assignments),
         "orders_created": 0,
         "already_existing": 0,
-        "skipped_no_assignments": 0,
+        "skipped_inactive_assignment": 0,
         "skipped_invalid_subscription": 0,
-        "skipped_user_not_found": 0,
+        "skipped_no_meals": 0,
+        "skipped_missing_customer": 0,
+        "skipped_missing_driver": 0,
+        "skipped_missing_delivery_preference": 0,
         "skipped_missing_delivery_location": 0,
+        "skipped_missing_delivery_time": 0,
         "created_orders": [],
+        "existing_orders": [],
         "skipped": [],
     }
 
-    for subscription in subscriptions:
-        order, outcome = (
-            create_daily_order_for_subscription(
-                db=db,
-                subscription=subscription,
-                target_date=target_date,
-            )
-        )
+    for assignment in assignments:
+        order, outcome = create_order_for_assignment(db, assignment)
 
         if outcome == "created":
-            order_items = order.items or []
-
-            total_quantity = sum(
-                int(item.get("quantity") or 1)
-                for item in order_items
-            )
-
-            delivery_locations = (
-                get_unique_delivery_snapshots(
-                    order_items
-                )
-            )
-
             result["orders_created"] += 1
+            result["created_orders"].append(serialize_created_order(order))
+            continue
 
-            result["created_orders"].append(
-                {
-                    "order_id": order.id,
-                    "order_number": (
-                        order.order_number
-                    ),
-                    "subscription_id": (
-                        subscription.id
-                    ),
-                    "user_id": (
-                        subscription.user_id
-                    ),
-                    "plan_id": (
-                        subscription.plan_id
-                    ),
-                    "status": enum_value(
-                        order.status
-                    ),
-                    "meal_items": len(
-                        order_items
-                    ),
-                    "total_quantity": (
-                        total_quantity
-                    ),
-                    "delivery_locations": len(
-                        delivery_locations
-                    ),
-                }
-            )
-
-        elif outcome == "already_exists":
+        if outcome == "already_exists":
             result["already_existing"] += 1
+            if order is not None:
+                result["existing_orders"].append(serialize_created_order(order))
+            continue
 
-        elif outcome == "no_assignments":
-            result[
-                "skipped_no_assignments"
-            ] += 1
+        counter_key = f"skipped_{outcome}"
+        if counter_key in result:
+            result[counter_key] += 1
 
-            result["skipped"].append(
-                {
-                    "subscription_id": (
-                        subscription.id
-                    ),
-                    "user_id": (
-                        subscription.user_id
-                    ),
-                    "reason": (
-                        "No active meal assignments "
-                        "exist for this date"
-                    ),
-                }
-            )
-
-        elif outcome == "invalid_subscription":
-            result[
-                "skipped_invalid_subscription"
-            ] += 1
-
-            result["skipped"].append(
-                {
-                    "subscription_id": (
-                        subscription.id
-                    ),
-                    "user_id": (
-                        subscription.user_id
-                    ),
-                    "reason": (
-                        "Subscription is not valid "
-                        "for this date"
-                    ),
-                }
-            )
-
-        elif outcome == "user_not_found":
-            result[
-                "skipped_user_not_found"
-            ] += 1
-
-            result["skipped"].append(
-                {
-                    "subscription_id": (
-                        subscription.id
-                    ),
-                    "user_id": (
-                        subscription.user_id
-                    ),
-                    "reason": (
-                        "Customer was not found"
-                    ),
-                }
-            )
-
-        elif outcome == "missing_delivery_location":
-            result[
-                "skipped_missing_delivery_location"
-            ] += 1
-
-            result["skipped"].append(
-                {
-                    "subscription_id": (
-                        subscription.id
-                    ),
-                    "user_id": (
-                        subscription.user_id
-                    ),
-                    "reason": (
-                        "At least one assigned meal "
-                        "has no delivery address"
-                    ),
-                }
-            )
+        result["skipped"].append(
+            {
+                "meal_assignment_id": assignment.id,
+                "subscription_id": assignment.subscription_id,
+                "user_id": assignment.user_id,
+                "meal_category_id": assignment.meal_category_id,
+                "reason_code": outcome,
+                "reason": outcome_message(outcome),
+            }
+        )
 
     return result
+
+
+def preview_assignment_order(assignment: MealAssignment) -> dict:
+    order_items = build_assignment_order_items(assignment)
+    delivery = build_delivery_snapshot(assignment)
+
+    return {
+        "meal_assignment_id": assignment.id,
+        "subscription_id": assignment.subscription_id,
+        "user_id": assignment.user_id,
+        "customer": build_customer_snapshot(assignment),
+        "plan_id": (
+            getattr(assignment.subscription, "plan_id", None)
+            if assignment.subscription
+            else None
+        ),
+        "meal_category": build_category_snapshot(assignment),
+        "driver": build_driver_snapshot(assignment),
+        "delivery_preference_id": assignment.delivery_preference_id,
+        "delivery_date": assignment.delivery_date,
+        "delivery_time": assignment.delivery_time,
+        "delivery": delivery,
+        "assignment_notes": assignment.notes,
+        "meal_count": len(order_items),
+        "total_quantity": sum(int(item.get("quantity") or 1) for item in order_items),
+        "total_amount": calculate_order_total(order_items),
+        "has_delivery_location": bool(delivery.get("delivery_address")),
+        "has_driver": assignment.driver is not None,
+        "subscription_is_valid": (
+            assignment.subscription is not None
+            and subscription_is_valid_for_date(
+                assignment.subscription,
+                assignment.delivery_date,
+            )
+        ),
+        "items": order_items,
+        "existing_order": None,
+    }
 
 
 def preview_orders_for_date(
     db: Session,
     target_date: date,
 ) -> dict:
-    """
-    Preview orders without inserting anything into the
-    database.
-    """
+    assignments = get_active_assignments_for_date(db, target_date)
+    data = []
 
-    subscriptions = (
-        db.query(Subscription)
-        .filter(
-            Subscription.status
-            == SubscriptionStatus.ACTIVE,
-            Subscription.payment_status
-            == PaymentStatus.PAID,
+    for assignment in assignments:
+        preview = preview_assignment_order(assignment)
+        existing_order = get_existing_order_for_assignment(db, assignment.id)
+
+        preview["existing_order"] = (
+            {
+                "id": existing_order.id,
+                "order_number": existing_order.order_number,
+                "status": enum_value(existing_order.status),
+            }
+            if existing_order
+            else None
         )
+        data.append(preview)
+
+    return {
+        "target_date": target_date,
+        "total_assignments": len(assignments),
+        "orders_already_existing": sum(
+            1 for item in data if item["existing_order"] is not None
+        ),
+        "orders_ready_to_create": sum(
+            1
+            for item in data
+            if (
+                item["existing_order"] is None
+                and item["meal_count"] > 0
+                and item["has_delivery_location"]
+                and item["has_driver"]
+                and item["subscription_is_valid"]
+            )
+        ),
+        "data": data,
+    }
+
+
+def confirm_scheduled_orders_for_date(
+    db: Session,
+    target_date: date,
+) -> dict:
+    orders = (
+        db.query(Order)
+        .filter(
+            Order.delivery_date == target_date,
+            Order.status == OrderStatus.SCHEDULED,
+        )
+        .order_by(Order.delivery_time.asc(), Order.id.asc())
+        .all()
+    )
+
+    confirmation_time = datetime.utcnow()
+    for order in orders:
+        order.status = OrderStatus.CONFIRMED
+        order.confirmed_at = confirmation_time
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "target_date": target_date,
+        "orders_confirmed": len(orders),
+        "order_ids": [order.id for order in orders],
+        "order_numbers": [order.order_number for order in orders],
+    }
+
+
+def generate_and_confirm_orders_for_date(
+    db: Session,
+    target_date: date,
+) -> dict:
+    generation = generate_orders_for_date(db, target_date)
+
+    confirmation = {
+        "target_date": target_date,
+        "orders_confirmed": 0,
+        "order_ids": [],
+        "order_numbers": [],
+    }
+
+    if target_date <= date.today():
+        confirmation = confirm_scheduled_orders_for_date(db, target_date)
+
+    return {
+        "target_date": target_date,
+        "generation": generation,
+        "confirmation": confirmation,
+    }
+
+
+def get_orders_for_assignment_date(
+    db: Session,
+    target_date: date,
+) -> list[Order]:
+    return (
+        db.query(Order)
+        .filter(Order.delivery_date == target_date)
         .order_by(
-            Subscription.id.asc()
+            Order.delivery_time.asc(),
+            Order.meal_category_id.asc(),
+            Order.id.asc(),
         )
         .all()
     )
 
-    preview_data = []
 
-    for subscription in subscriptions:
-        if not subscription_is_valid_for_date(
-            subscription=subscription,
-            target_date=target_date,
-        ):
-            continue
+def get_assignment_ids_with_orders(
+    db: Session,
+    target_date: date,
+) -> set[int]:
+    rows = (
+        db.query(Order.meal_assignment_id)
+        .filter(Order.delivery_date == target_date)
+        .all()
+    )
+    return {row.meal_assignment_id for row in rows}
 
-        user = (
-            db.query(User)
-            .filter(
-                User.id == subscription.user_id
-            )
-            .first()
+
+def get_subscription_ids_with_assignments(
+    db: Session,
+    target_date: date,
+) -> set[int]:
+    rows = (
+        db.query(MealAssignment.subscription_id)
+        .filter(
+            MealAssignment.delivery_date == target_date,
+            MealAssignment.is_active.is_(True),
         )
-
-        if user is None:
-            continue
-
-        items = build_subscription_order_items(
-            db=db,
-            subscription=subscription,
-            target_date=target_date,
-        )
-
-        if not items:
-            continue
-
-        plan = (
-            db.query(MealPlan)
-            .filter(
-                MealPlan.id
-                == subscription.plan_id
-            )
-            .first()
-        )
-
-        grouped_locations = defaultdict(list)
-
-        for item in items:
-            delivery = item.get("delivery") or {}
-
-            location_key = (
-                delivery.get(
-                    "delivery_preference_id"
-                )
-                or (
-                    delivery.get(
-                        "delivery_address"
-                    )
-                )
-            )
-
-            grouped_locations[
-                str(location_key)
-            ].append(item)
-
-        preview_data.append(
-            {
-                "subscription_id": (
-                    subscription.id
-                ),
-                "user_id": user.id,
-                "customer": {
-                    "id": user.id,
-                    "name": (
-                        f"{user.first_name} "
-                        f"{user.last_name}"
-                    ).strip(),
-                    "phone": user.phone,
-                    "general_address": (
-                        user.address
-                    ),
-                    "allergies": (
-                        user.allergies or []
-                    ),
-                    "dietary_preference": (
-                        user.dietary_preference
-                    ),
-                },
-                "plan": (
-                    {
-                        "id": plan.id,
-                        "name": plan.name_en,
-                    }
-                    if plan
-                    else None
-                ),
-                "meal_count": len(items),
-                "total_quantity": sum(
-                    int(
-                        item.get("quantity")
-                        or 1
-                    )
-                    for item in items
-                ),
-                "total_amount": (
-                    calculate_order_total(
-                        items
-                    )
-                ),
-                "has_complete_delivery_locations": (
-                    order_has_delivery_location(
-                        items
-                    )
-                ),
-                "delivery_location_count": len(
-                    grouped_locations
-                ),
-                "items": items,
-            }
-        )
-
-    return {
-        "target_date": target_date,
-        "total_subscriptions": len(
-            preview_data
-        ),
-        "data": preview_data,
-    }
+        .distinct()
+        .all()
+    )
+    return {row.subscription_id for row in rows}
