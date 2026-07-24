@@ -122,19 +122,19 @@ class CustomerDriverAssignment(Base):
     )
 
     customer = relationship(
-        "User",
-        foreign_keys=[customer_id],
-        lazy="joined",
-    )
+    "User",
+    foreign_keys=[customer_id],
+    back_populates="customer_driver_assignments",
+)
 
     driver = relationship(
-        "User",
-        foreign_keys=[driver_id],
-        lazy="joined",
-    )
+    "User",
+    foreign_keys=[driver_id],
+    back_populates="driver_customer_assignments",
+)
 
     assigned_by_user = relationship(
-        "User",
-        foreign_keys=[assigned_by],
-        lazy="joined",
-    )
+    "User",
+    foreign_keys=[assigned_by],
+    back_populates="created_driver_assignments",
+)

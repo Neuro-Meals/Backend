@@ -210,27 +210,30 @@ class User(Base):
     )
 
     customer_driver_assignments: Mapped[
-        list[CustomerDriverAssignment]
-    ] = relationship(
-        "CustomerDriverAssignment",
-        foreign_keys="CustomerDriverAssignment.customer_id",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
+    list["CustomerDriverAssignment"]
+] = relationship(
+    "CustomerDriverAssignment",
+    foreign_keys="CustomerDriverAssignment.customer_id",
+    back_populates="customer",
+    cascade="all, delete-orphan",
+    passive_deletes=True,
+)
 
     driver_customer_assignments: Mapped[
-        list[CustomerDriverAssignment]
-    ] = relationship(
-        "CustomerDriverAssignment",
-        foreign_keys="CustomerDriverAssignment.driver_id",
-    )
+    list["CustomerDriverAssignment"]
+] = relationship(
+    "CustomerDriverAssignment",
+    foreign_keys="CustomerDriverAssignment.driver_id",
+    back_populates="driver",
+)
 
     created_driver_assignments: Mapped[
-        list[CustomerDriverAssignment]
-    ] = relationship(
-        "CustomerDriverAssignment",
-        foreign_keys="CustomerDriverAssignment.assigned_by",
-    )
+    list["CustomerDriverAssignment"]
+] = relationship(
+    "CustomerDriverAssignment",
+    foreign_keys="CustomerDriverAssignment.assigned_by",
+    back_populates="assigned_by_user",
+)
 
 class UserCategoryDeliveryPreference(Base):
     __tablename__ = "user_category_delivery_preferences"

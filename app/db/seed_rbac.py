@@ -1,5 +1,5 @@
 from sqlalchemy.exc import SQLAlchemyError
-
+import app.db.models 
 from app.db.database import SessionLocal
 from app.modules.users.models import User
 from app.modules.users.rbac_models import (
