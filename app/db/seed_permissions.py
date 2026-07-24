@@ -123,14 +123,6 @@ PERMISSIONS = [
     ("chefs.deactivate", "Deactivate chefs"),
     ("chefs.assign_role", "Assign chef role"),
     ("chefs.remove_role", "Remove chef role"),
-
-# Chef kitchen operations 
-    ("chef.orders.view", "View kitchen orders"),
-    ("chef.orders.prepare", "Start order preparation"),
-    ("chef.orders.ready", "Mark order ready for delivery"),
-    ("chef.drivers.view", "View available drivers"),
-    ("chef.deliveries.assign", "Assign driver to ready order"),
-    
     
     # Chef detailed operations
     ("chef.orders.today", "View today's kitchen orders"),
@@ -151,37 +143,52 @@ def seed_permissions() -> None:
         created_count = 0
         updated_count = 0
         skipped_count = 0
+        duplicate_count = 0
 
-        for code, description in PERMISSIONS:
+        # Tracks codes encountered during this seed execution.
+        seen_codes: set[str] = set()
+
+        for raw_code, raw_description in PERMISSIONS:
+            code = raw_code.strip()
+            description = raw_description.strip()
+
+            # Prevent duplicate definitions inside PERMISSIONS.
+            if code in seen_codes:
+                duplicate_count += 1
+                print(f"Duplicate permission definition skipped: {code}")
+                continue
+
+            seen_codes.add(code)
+
             permission = (
                 db.query(Permission)
                 .filter(Permission.code == code)
                 .first()
             )
 
-            if permission:
-                if permission.description != description:
-                    permission.description = description
-                    updated_count += 1
-                else:
-                    skipped_count += 1
-
+            if permission is None:
+                db.add(
+                    Permission(
+                        code=code,
+                        description=description,
+                    )
+                )
+                created_count += 1
                 continue
 
-            permission = Permission(
-                code=code,
-                description=description,
-            )
-
-            db.add(permission)
-            created_count += 1
+            if permission.description != description:
+                permission.description = description
+                updated_count += 1
+            else:
+                skipped_count += 1
 
         db.commit()
 
-        print("Permission seeding completed")
+        print("\nPermission seeding completed.")
         print(f"Created: {created_count}")
         print(f"Updated: {updated_count}")
         print(f"Already existed: {skipped_count}")
+        print(f"Duplicate definitions skipped: {duplicate_count}")
 
     except SQLAlchemyError as exc:
         db.rollback()
