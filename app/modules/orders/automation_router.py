@@ -13,6 +13,7 @@ from app.modules.auth.dependencies import (
 )
 from app.modules.orders.automation_schemas import (
     AutomaticOrderGenerationResponse,
+    ConfirmedOrdersResponse,
 )
 from app.modules.orders.automation_service import (
     confirm_scheduled_orders_for_date,
@@ -101,7 +102,10 @@ def generate_tomorrow_orders(
     )
 
 
-@router.post("/confirm-today")
+@router.post(
+    "/confirm-today",
+    response_model=ConfirmedOrdersResponse,
+)
 def confirm_today_scheduled_orders(
     db: Session = Depends(get_db),
     current_user: User = Depends(
@@ -122,6 +126,7 @@ def confirm_today_scheduled_orders(
 
 @router.post(
     "/confirm",
+    response_model=ConfirmedOrdersResponse,
 )
 def confirm_scheduled_orders(
     target_date: date = Query(
@@ -143,7 +148,7 @@ def confirm_scheduled_orders(
         db=db,
         target_date=target_date,
     )
-
+    
 
 @router.get("/preview")
 def preview_automatic_orders(
