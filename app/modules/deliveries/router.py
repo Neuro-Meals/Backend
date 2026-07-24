@@ -153,7 +153,6 @@ def _ensure_delivery_access(
         "You are not allowed to access this delivery."
     )
 
-
 def _extract_order_items(order: Order | None) -> list[dict]:
     if order is None:
         return []
