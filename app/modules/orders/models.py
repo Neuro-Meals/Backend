@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from app.modules.deliveries.models import Delivery
 from datetime import date, datetime, time
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -199,6 +199,14 @@ class Order(Base):
         JSON,
         default=list,
         nullable=False,
+    )
+    delivery: Mapped["Delivery | None"] = relationship(
+        "Delivery",
+        back_populates="order",
+        uselist=False,
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     #
