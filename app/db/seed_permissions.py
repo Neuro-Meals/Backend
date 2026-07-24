@@ -124,8 +124,7 @@ PERMISSIONS = [
     ("chefs.assign_role", "Assign chef role"),
     ("chefs.remove_role", "Remove chef role"),
 
-# Chef kitchen operations
-    ("chef.dashboard", "View chef dashboard"),
+# Chef kitchen operations 
     ("chef.orders.view", "View kitchen orders"),
     ("chef.orders.prepare", "Start order preparation"),
     ("chef.orders.ready", "Mark order ready for delivery"),
