@@ -1,56 +1,24 @@
-from datetime import datetime
+from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from datetime import date, datetime, time
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.modules.deliveries.models import DeliveryStatus
-
-
-class DeliveryCreate(BaseModel):
-    order_id: int
-    driver_id: int | None = None
-    delivery_address: str | None = None
-    delivery_notes: str | None = None
-    scheduled_at: datetime | None = None
-
-
-class AssignDriverRequest(BaseModel):
-    driver_id: int
-
-
-class UpdateDeliveryStatus(BaseModel):
-    status: DeliveryStatus
-    failure_reason: str | None = None
+from app.modules.orders.models import OrderStatus
 
 
 class UpdateDriverLocation(BaseModel):
-    latitude: float
-    longitude: float
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
 
 
-class DeliveryResponse(BaseModel):
-    id: int
-    order_id: int
-    user_id: int
-    driver_id: int | None = None
-
-    status: DeliveryStatus
-
-    delivery_address: str
-    delivery_notes: str | None = None
-
-    scheduled_at: datetime | None = None
-    picked_up_at: datetime | None = None
-    delivered_at: datetime | None = None
-
-    current_latitude: float | None = None
-    current_longitude: float | None = None
-
-    failure_reason: str | None = None
-
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+class FailDeliveryRequest(BaseModel):
+    reason: str = Field(
+        ...,
+        min_length=3,
+        max_length=500,
+    )
 
 
 class DeliveryCustomerResponse(BaseModel):
@@ -60,8 +28,6 @@ class DeliveryCustomerResponse(BaseModel):
     full_name: str | None = None
     email: str | None = None
     phone: str | None = None
-    location: str | None = None
-    address: str | None = None
 
 
 class DeliveryDriverResponse(BaseModel):
@@ -75,34 +41,67 @@ class DeliveryDriverResponse(BaseModel):
 
 class DeliveryOrderResponse(BaseModel):
     id: int
-    order_number: str | None = None
-    status: str | None = None
-    total_amount: float | None = None
-    delivery_date: datetime | None = None
-    items: list[dict] | None = None
+    order_number: str
+    status: OrderStatus
 
+    user_id: int
+    driver_id: int
+    meal_category_id: int
 
-class DriverDeliveryResponse(BaseModel):
-    id: int
-    status: DeliveryStatus
-
+    delivery_date: date
+    delivery_time: time
     delivery_address: str
     delivery_notes: str | None = None
 
-    scheduled_at: datetime | None = None
+    total_amount: float
+    items: list[dict] = Field(default_factory=list)
+
+
+class DeliveryResponse(BaseModel):
+    id: int
+    order_id: int
+    status: DeliveryStatus
+
+    ready_for_pickup_at: datetime | None = None
     picked_up_at: datetime | None = None
+    out_for_delivery_at: datetime | None = None
     delivered_at: datetime | None = None
+    failed_at: datetime | None = None
+    cancelled_at: datetime | None = None
 
     current_latitude: float | None = None
     current_longitude: float | None = None
-
     failure_reason: str | None = None
 
     created_at: datetime
     updated_at: datetime
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DriverDeliveryResponse(DeliveryResponse):
+    order: DeliveryOrderResponse
     customer: DeliveryCustomerResponse | None = None
     driver: DeliveryDriverResponse | None = None
-    order: DeliveryOrderResponse | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+
+class DriverDashboardSummary(BaseModel):
+    date: date
+    total_assigned: int
+    ready_for_pickup: int
+    picked_up: int
+    out_for_delivery: int
+    delivered: int
+    failed: int
+
+
+class DriverDashboardResponse(BaseModel):
+    driver: DeliveryDriverResponse
+    summary: DriverDashboardSummary
+    current_delivery: DriverDeliveryResponse | None = None
+    next_delivery: DriverDeliveryResponse | None = None
+
+
+class DeliveryStatusResponse(BaseModel):
+    message: str
+    delivery: DriverDeliveryResponse

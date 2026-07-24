@@ -10,6 +10,114 @@ from app.modules.customer_drivers.models import CustomerDriverAssignment
 from app.modules.deliveries.models import Delivery, DeliveryStatus
 from app.modules.orders.models import Order, OrderStatus
 from app.modules.users.models import User, UserRole
+from sqlalchemy.exc import IntegrityError
+
+from app.modules.orders.models import Order, OrderStatus
+
+
+def get_delivery_for_order(
+    db: Session,
+    order_id: int,
+) -> Delivery | None:
+    return (
+        db.query(Delivery)
+        .filter(Delivery.order_id == order_id)
+        .first()
+    )
+
+
+def ensure_delivery_for_order(
+    db: Session,
+    order: Order,
+    *,
+    commit: bool = False,
+) -> Delivery:
+    """
+    Create the tracking row for an order exactly once.
+
+    The order must already have a driver and delivery location.
+    """
+
+    existing = get_delivery_for_order(
+        db=db,
+        order_id=order.id,
+    )
+
+    if existing is not None:
+        if (
+            order.status
+            == OrderStatus.READY_FOR_DELIVERY
+            and existing.status == DeliveryStatus.PENDING
+        ):
+            existing.status = (
+                DeliveryStatus.READY_FOR_PICKUP
+            )
+            existing.ready_for_pickup_at = (
+                existing.ready_for_pickup_at
+                or datetime.utcnow()
+            )
+
+        if commit:
+            db.commit()
+            db.refresh(existing)
+
+        return existing
+
+    if order.driver_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Order has no assigned driver and cannot "
+                "create a delivery"
+            ),
+        )
+
+    if not order.delivery_address:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Order has no delivery address and cannot "
+                "create a delivery"
+            ),
+        )
+
+    initial_status = DeliveryStatus.PENDING
+    ready_at = None
+
+    if order.status == OrderStatus.READY_FOR_DELIVERY:
+        initial_status = (
+            DeliveryStatus.READY_FOR_PICKUP
+        )
+        ready_at = datetime.utcnow()
+
+    delivery = Delivery(
+        order_id=order.id,
+        status=initial_status,
+        ready_for_pickup_at=ready_at,
+    )
+
+    db.add(delivery)
+
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+
+        existing = get_delivery_for_order(
+            db=db,
+            order_id=order.id,
+        )
+
+        if existing is None:
+            raise
+
+        return existing
+
+    if commit:
+        db.commit()
+        db.refresh(delivery)
+
+    return delivery
 
 
 def start_of_day(target_date: date | None = None) -> datetime:
@@ -291,16 +399,12 @@ def ensure_driver_can_access_delivery(
 def create_delivery(
     db: Session,
     order_id: int,
-    driver_id: int | None = None,
-    delivery_address: str | None = None,
-    delivery_notes: str | None = None,
-    scheduled_at: datetime | None = None,
 ) -> Delivery:
     """
-    Create a delivery for an existing order.
+    Create one delivery tracking record for an order.
 
-    When driver_id is omitted, the customer's dedicated active
-    driver is selected automatically.
+    The customer, driver, delivery location, date, and time
+    are already stored on the Order.
     """
 
     order = get_order_or_404(
@@ -308,82 +412,80 @@ def create_delivery(
         order_id=order_id,
     )
 
-    ensure_order_has_no_delivery(
+    existing_delivery = get_delivery_by_order_id(
         db=db,
         order_id=order.id,
     )
 
-    resolved_driver = resolve_delivery_driver(
-        db=db,
-        customer_id=order.user_id,
-        requested_driver_id=driver_id,
-    )
+    if existing_delivery:
+        return existing_delivery
 
-    resolved_address = (
-        delivery_address
-        or getattr(order, "delivery_address", None)
-    )
-
-    if not resolved_address:
-        customer = get_customer(
-            db=db,
-            customer_id=order.user_id,
-        )
-
-        resolved_address = (
-            getattr(customer, "address", None)
-            if customer
-            else None
-        )
-
-    if not resolved_address:
+    if order.driver_id is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Order does not have an assigned driver",
+        )
+
+    if not order.delivery_address:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Order does not have a delivery address",
+        )
+
+    if order.status not in {
+        OrderStatus.CONFIRMED,
+        OrderStatus.PREPARING,
+        OrderStatus.READY_FOR_DELIVERY,
+    }:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Delivery address is required because neither "
-                "the request, order, nor customer profile contains one"
+                "Delivery can only be created for a confirmed, "
+                "preparing, or ready-for-delivery order"
             ),
         )
 
-    resolved_notes = (
-        delivery_notes
-        if delivery_notes is not None
-        else getattr(order, "delivery_notes", None)
-    )
+    delivery_status = DeliveryStatus.PENDING
+
+    if order.status == OrderStatus.READY_FOR_DELIVERY:
+        delivery_status = DeliveryStatus.READY_FOR_PICKUP
 
     delivery = Delivery(
         order_id=order.id,
-        user_id=order.user_id,
-        driver_id=(
-            resolved_driver.id
-            if resolved_driver
+        status=delivery_status,
+        ready_for_pickup_at=(
+            datetime.utcnow()
+            if delivery_status
+            == DeliveryStatus.READY_FOR_PICKUP
             else None
         ),
-        status=(
-            DeliveryStatus.ASSIGNED
-            if resolved_driver
-            else DeliveryStatus.PENDING
-        ),
-        delivery_address=resolved_address.strip(),
-        delivery_notes=(
-            resolved_notes.strip()
-            if isinstance(resolved_notes, str)
-            and resolved_notes.strip()
-            else None
-        ),
-        scheduled_at=scheduled_at,
     )
 
     db.add(delivery)
 
-    # The food has been prepared and is now waiting for
-    # delivery operations or driver pickup.
-    order.status = OrderStatus.READY_FOR_DELIVERY
+    try:
+        db.commit()
+        db.refresh(delivery)
 
-    db.commit()
-    db.refresh(delivery)
+    except IntegrityError as exc:
+        db.rollback()
+
+        existing_delivery = get_delivery_by_order_id(
+            db=db,
+            order_id=order.id,
+        )
+
+        if existing_delivery:
+            return existing_delivery
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Delivery already exists for this order",
+        ) from exc
 
     return delivery
+
+
 
 def assign_driver_to_delivery(
     db: Session,

@@ -4,7 +4,15 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum as SqlEnum, Float, Integer, String
+from sqlalchemy import (
+    DateTime,
+    Enum as SqlEnum,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
@@ -12,12 +20,11 @@ from app.db.database import Base
 
 if TYPE_CHECKING:
     from app.modules.orders.models import Order
-    from app.modules.users.models import User
 
 
 class DeliveryStatus(str, Enum):
     PENDING = "pending"
-    ASSIGNED = "assigned"
+    READY_FOR_PICKUP = "ready_for_pickup"
     PICKED_UP = "picked_up"
     OUT_FOR_DELIVERY = "out_for_delivery"
     DELIVERED = "delivered"
@@ -26,7 +33,21 @@ class DeliveryStatus(str, Enum):
 
 
 class Delivery(Base):
+    """
+    Tracking record for one Order.
+
+    Business delivery data such as customer, driver, address,
+    delivery date, and delivery time remains on Order.
+    """
+
     __tablename__ = "deliveries"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "order_id",
+            name="uq_delivery_order_id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(
         Integer,
@@ -35,20 +56,11 @@ class Delivery(Base):
     )
 
     order_id: Mapped[int] = mapped_column(
-        Integer,
+        ForeignKey(
+            "orders.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
-        index=True,
-    )
-
-    user_id: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        index=True,
-    )
-
-    driver_id: Mapped[int | None] = mapped_column(
-        Integer,
-        nullable=True,
         index=True,
     )
 
@@ -59,19 +71,10 @@ class Delivery(Base):
         ),
         default=DeliveryStatus.PENDING,
         nullable=False,
+        index=True,
     )
 
-    delivery_address: Mapped[str] = mapped_column(
-        String(255),
-        nullable=False,
-    )
-
-    delivery_notes: Mapped[str | None] = mapped_column(
-        String(500),
-        nullable=True,
-    )
-
-    scheduled_at: Mapped[datetime | None] = mapped_column(
+    ready_for_pickup_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         nullable=True,
     )
@@ -81,7 +84,22 @@ class Delivery(Base):
         nullable=True,
     )
 
+    out_for_delivery_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
     delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    failed_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    cancelled_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         nullable=True,
     )
@@ -114,45 +132,10 @@ class Delivery(Base):
         nullable=False,
     )
 
-    #
-    # These relationships are view-only because the current
-    # database columns do not yet have SQL ForeignKey objects.
-    #
-    # They allow:
-    #
-    # delivery.order
-    # delivery.customer
-    # delivery.driver
-    #
-    # without changing the existing database schema.
-
-    order: Mapped[Order | None] = relationship(
+    order: Mapped["Order"] = relationship(
         "Order",
-        primaryjoin=(
-            "foreign(Delivery.order_id) == Order.id"
-        ),
-        viewonly=True,
+        back_populates="delivery",
         lazy="selectin",
-    )
-
-    customer: Mapped[User | None] = relationship(
-        "User",
-        primaryjoin=(
-            "foreign(Delivery.user_id) == User.id"
-        ),
-        viewonly=True,
-        lazy="selectin",
-        overlaps="driver",
-    )
-
-    driver: Mapped[User | None] = relationship(
-        "User",
-        primaryjoin=(
-            "foreign(Delivery.driver_id) == User.id"
-        ),
-        viewonly=True,
-        lazy="selectin",
-        overlaps="customer",
     )
 
     def __repr__(self) -> str:
@@ -160,8 +143,6 @@ class Delivery(Base):
             f"<Delivery("
             f"id={self.id}, "
             f"order_id={self.order_id}, "
-            f"user_id={self.user_id}, "
-            f"driver_id={self.driver_id}, "
             f"status={self.status}"
             f")>"
         )

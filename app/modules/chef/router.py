@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
-
+from app.modules.deliveries.service import ensure_delivery_for_order
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
@@ -654,12 +654,21 @@ def chef_mark_ready(
             ),
         )
 
+    # Mark the order ready
     order.status = OrderStatus.READY_FOR_DELIVERY
     order.ready_at = datetime.utcnow()
+
+    # Create the delivery tracking record if it doesn't exist
+    ensure_delivery_for_order(
+        db=db,
+        order=order,
+        commit=False,
+    )
 
     try:
         db.commit()
         db.refresh(order)
+
     except Exception:
         db.rollback()
         raise
