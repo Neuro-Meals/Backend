@@ -1,7 +1,11 @@
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import date, datetime, time
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    Date,
     DateTime,
     Enum as SqlEnum,
     Float,
@@ -10,11 +14,24 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    Time,
     UniqueConstraint,
+    text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.database import Base
+
+
+if TYPE_CHECKING:
+    from app.modules.meal_assignments.models import MealAssignment
+    from app.modules.meals.models import MealCategory
+    from app.modules.plans.models import MealPlan
+    from app.modules.subscriptions.models import Subscription
+    from app.modules.users.models import (
+        User,
+        UserCategoryDeliveryPreference,
+    )
 
 
 class OrderStatus(str, Enum):
@@ -34,13 +51,29 @@ class OrderSource(str, Enum):
 
 
 class Order(Base):
+    """
+    One order represents exactly one meal-category assignment.
+
+    Example:
+
+    Breakfast assignment
+        - Banana
+        - Eggs
+        - Oatmeal
+        - Home location
+        - Driver John
+
+    creates one breakfast order.
+
+    Lunch and dinner create separate orders.
+    """
+
     __tablename__ = "orders"
 
     __table_args__ = (
         UniqueConstraint(
-            "subscription_id",
-            "delivery_date",
-            name="uq_order_subscription_delivery_date",
+            "meal_assignment_id",
+            name="uq_order_meal_assignment",
         ),
     )
 
@@ -48,6 +81,13 @@ class Order(Base):
         Integer,
         primary_key=True,
         index=True,
+    )
+
+    order_number: Mapped[str] = mapped_column(
+        String(50),
+        unique=True,
+        index=True,
+        nullable=False,
     )
 
     user_id: Mapped[int] = mapped_column(
@@ -77,11 +117,41 @@ class Order(Base):
         index=True,
     )
 
-    order_number: Mapped[str] = mapped_column(
-        String(50),
+    meal_assignment_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "meal_assignments.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
         unique=True,
         index=True,
+    )
+
+    meal_category_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "meal_categories.id",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
+        index=True,
+    )
+
+    driver_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "users.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    delivery_preference_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "user_category_delivery_preferences.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
     )
 
     source: Mapped[OrderSource] = mapped_column(
@@ -90,8 +160,9 @@ class Order(Base):
             name="order_source",
         ),
         default=OrderSource.AUTOMATIC,
-        server_default=OrderSource.AUTOMATIC.value,
+        server_default=text("'AUTOMATIC'"),
         nullable=False,
+        index=True,
     )
 
     status: Mapped[OrderStatus] = mapped_column(
@@ -99,8 +170,20 @@ class Order(Base):
             OrderStatus,
             name="orderstatus",
         ),
-        default=OrderStatus.PENDING,
-        server_default=OrderStatus.PENDING.value,
+        default=OrderStatus.SCHEDULED,
+        server_default=text("'SCHEDULED'"),
+        nullable=False,
+        index=True,
+    )
+
+    delivery_date: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+        index=True,
+    )
+
+    delivery_time: Mapped[time] = mapped_column(
+        Time,
         nullable=False,
         index=True,
     )
@@ -112,20 +195,21 @@ class Order(Base):
         nullable=False,
     )
 
-    delivery_date: Mapped[datetime | None] = mapped_column(
-        DateTime,
-        nullable=True,
-        index=True,
+    items: Mapped[list[dict]] = mapped_column(
+        JSON,
+        default=list,
+        nullable=False,
     )
 
-    delivery_preference_id: Mapped[int | None] = mapped_column(
-        ForeignKey(
-            "user_category_delivery_preferences.id",
-            ondelete="SET NULL",
-        ),
-        nullable=True,
-        index=True,
-    )
+    #
+    # Delivery-location snapshot
+    #
+    # These values are copied from the selected customer
+    # delivery preference when the order is generated.
+    #
+    # Future changes to the customer's profile or preference
+    # will not change old orders.
+    #
 
     delivery_place_type: Mapped[str | None] = mapped_column(
         String(50),
@@ -147,9 +231,9 @@ class Order(Base):
         nullable=True,
     )
 
-    delivery_address: Mapped[str | None] = mapped_column(
+    delivery_address: Mapped[str] = mapped_column(
         String(500),
-        nullable=True,
+        nullable=False,
     )
 
     delivery_latitude: Mapped[float | None] = mapped_column(
@@ -167,11 +251,9 @@ class Order(Base):
         nullable=True,
     )
 
-    items: Mapped[list[dict]] = mapped_column(
-        JSON,
-        default=list,
-        nullable=False,
-    )
+    #
+    # Chef workflow timestamps
+    #
 
     confirmed_at: Mapped[datetime | None] = mapped_column(
         DateTime,
@@ -188,6 +270,10 @@ class Order(Base):
         nullable=True,
     )
 
+    #
+    # Driver workflow timestamps
+    #
+
     out_for_delivery_at: Mapped[datetime | None] = mapped_column(
         DateTime,
         nullable=True,
@@ -197,6 +283,10 @@ class Order(Base):
         DateTime,
         nullable=True,
     )
+
+    #
+    # Cancellation
+    #
 
     cancelled_at: Mapped[datetime | None] = mapped_column(
         DateTime,
@@ -220,3 +310,60 @@ class Order(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+    #
+    # Relationships
+    #
+
+    customer: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[user_id],
+        lazy="selectin",
+    )
+
+    driver: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[driver_id],
+        lazy="selectin",
+    )
+
+    subscription: Mapped["Subscription | None"] = relationship(
+        "Subscription",
+        lazy="selectin",
+    )
+
+    plan: Mapped["MealPlan | None"] = relationship(
+        "MealPlan",
+        lazy="selectin",
+    )
+
+    meal_assignment: Mapped["MealAssignment"] = relationship(
+        "MealAssignment",
+        lazy="selectin",
+    )
+
+    meal_category: Mapped["MealCategory"] = relationship(
+        "MealCategory",
+        lazy="selectin",
+    )
+
+    delivery_preference: Mapped[
+        "UserCategoryDeliveryPreference"
+    ] = relationship(
+        "UserCategoryDeliveryPreference",
+        lazy="selectin",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            "<Order("
+            f"id={self.id}, "
+            f"order_number={self.order_number}, "
+            f"user_id={self.user_id}, "
+            f"meal_assignment_id={self.meal_assignment_id}, "
+            f"meal_category_id={self.meal_category_id}, "
+            f"driver_id={self.driver_id}, "
+            f"delivery_date={self.delivery_date}, "
+            f"status={self.status}"
+            ")>"
+        )
