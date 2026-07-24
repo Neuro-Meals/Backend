@@ -40,11 +40,6 @@ router = APIRouter(
     tags=["Admin Chef Management"],
 )
 
-
-# -------------------------------------------------------------------
-# Email configuration
-# -------------------------------------------------------------------
-
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
@@ -65,11 +60,6 @@ CHEF_LOGIN_URL = os.getenv(
     "CHEF_LOGIN_URL",
     f"{FRONTEND_URL}/login",
 )
-
-
-# -------------------------------------------------------------------
-# Email helpers
-# -------------------------------------------------------------------
 
 def send_email_message(
     recipient: str,
@@ -598,11 +588,6 @@ NutrioMeals Team
         text_body=text_body,
     )
 
-
-# -------------------------------------------------------------------
-# Common helpers
-# -------------------------------------------------------------------
-
 def chef_payload(user: User) -> dict:
     return {
         "id": user.id,
@@ -645,11 +630,6 @@ def get_chef_or_404(
         )
 
     return chef
-
-
-# -------------------------------------------------------------------
-# Create Chef
-# -------------------------------------------------------------------
 
 @router.post(
     "/",
@@ -742,11 +722,6 @@ def create_chef(
 
     return chef_payload(chef)
 
-
-# -------------------------------------------------------------------
-# List Chefs
-# -------------------------------------------------------------------
-
 @router.get("/")
 def list_chefs(
     db: Session = Depends(get_db),
@@ -811,10 +786,6 @@ def list_chefs(
     }
 
 
-# -------------------------------------------------------------------
-# Get One Chef
-# -------------------------------------------------------------------
-
 @router.get(
     "/{chef_id}",
     response_model=ChefResponse,
@@ -835,11 +806,6 @@ def get_chef(
     )
 
     return chef_payload(chef)
-
-
-# -------------------------------------------------------------------
-# Update Chef
-# -------------------------------------------------------------------
 
 @router.patch(
     "/{chef_id}",
@@ -953,11 +919,6 @@ def update_chef(
 
     return chef_payload(chef)
 
-
-# -------------------------------------------------------------------
-# Activate Chef
-# -------------------------------------------------------------------
-
 @router.patch(
     "/{chef_id}/activate",
     response_model=ChefResponse,
@@ -998,11 +959,6 @@ def activate_chef(
 
     return chef_payload(chef)
 
-
-# -------------------------------------------------------------------
-# Deactivate Chef
-# -------------------------------------------------------------------
-
 @router.patch(
     "/{chef_id}/deactivate",
     response_model=ChefResponse,
@@ -1042,11 +998,6 @@ def deactivate_chef(
     )
 
     return chef_payload(chef)
-
-
-# -------------------------------------------------------------------
-# Assign Existing User as Chef
-# -------------------------------------------------------------------
 
 @router.post(
     "/assign-existing-user",
@@ -1103,11 +1054,6 @@ def assign_existing_user_as_chef(
     )
 
     return chef_payload(user)
-
-
-# -------------------------------------------------------------------
-# Remove Chef Role
-# -------------------------------------------------------------------
 
 @router.patch(
     "/{chef_id}/remove-role",
