@@ -2,7 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from enum import Enum
 
+from app.modules.meal_assignments.models import MealAssignment
 from app.db.database import get_db
 from app.modules.auth.dependencies import (
     get_current_user,
@@ -12,6 +14,7 @@ from app.modules.meals.models import MealCategory
 from app.modules.orders.models import Order
 from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import (
+    PaymentStatus,
     Subscription,
     SubscriptionStatus,
 )
@@ -36,6 +39,12 @@ router = APIRouter(
     prefix="/users",
     tags=["Users"],
 )
+
+class CustomerMealWorkflow(str, Enum):
+    ALL = "all"
+    NOT_PAID = "not_paid"
+    PAID_WITHOUT_MEALS = "paid_without_meals"
+    PAID_WITH_MEALS = "paid_with_meals"
 
 
 def enum_value(value):
@@ -643,6 +652,12 @@ def list_users(
         None,
         description="Filter verified/unverified users",
     ),
+    workflow: CustomerMealWorkflow = Query(
+        default=CustomerMealWorkflow.ALL,
+        description=(
+            "Filter customers by payment and meal-allocation status"
+        ),
+    ),
     page: int = Query(
         1,
         ge=1,
@@ -682,6 +697,55 @@ def list_users(
         query = query.filter(
             User.is_verified == is_verified
         )
+        
+    active_paid_subscription_exists = (
+        db.query(Subscription.id)
+        .filter(
+            Subscription.user_id == User.id,
+            Subscription.status == SubscriptionStatus.ACTIVE,
+            Subscription.payment_status == PaymentStatus.PAID,
+        )
+        .exists()
+    )
+
+    active_paid_meal_assignment_exists = (
+        db.query(MealAssignment.id)
+        .join(
+            Subscription,
+            Subscription.id == MealAssignment.subscription_id,
+        )
+        .filter(
+            MealAssignment.user_id == User.id,
+            MealAssignment.is_active.is_(True),
+            Subscription.user_id == User.id,
+            Subscription.status == SubscriptionStatus.ACTIVE,
+            Subscription.payment_status == PaymentStatus.PAID,
+        )
+        .exists()
+    )
+
+    if workflow != CustomerMealWorkflow.ALL:
+        # This workflow is only meaningful for customers.
+        query = query.filter(
+            User.role == UserRole.CUSTOMER
+        )
+
+    if workflow == CustomerMealWorkflow.NOT_PAID:
+        query = query.filter(
+            ~active_paid_subscription_exists
+        )
+
+    elif workflow == CustomerMealWorkflow.PAID_WITHOUT_MEALS:
+        query = query.filter(
+            active_paid_subscription_exists,
+            ~active_paid_meal_assignment_exists,
+        )
+
+    elif workflow == CustomerMealWorkflow.PAID_WITH_MEALS:
+        query = query.filter(
+            active_paid_subscription_exists,
+            active_paid_meal_assignment_exists,
+        )
 
     total = query.count()
 
@@ -703,6 +767,7 @@ def list_users(
 
     orders_counts = {}
     total_spents = {}
+    assignment_counts_by_subscription = {}
 
     if user_ids:
         order_statistics = (
@@ -737,6 +802,39 @@ def list_users(
             )
 
     subscriptions_information = {}
+    
+    selected_subscription_ids = [
+        subscription["id"]
+        for subscription in subscriptions_information.values()
+        if subscription.get("id") is not None
+    ]
+
+    if selected_subscription_ids:
+        assignment_rows = (
+            db.query(
+                MealAssignment.subscription_id,
+                func.count(
+                    MealAssignment.id
+                ).label("meal_assignments_count"),
+            )
+            .filter(
+                MealAssignment.subscription_id.in_(
+                    selected_subscription_ids
+                ),
+                MealAssignment.is_active.is_(True),
+            )
+            .group_by(
+                MealAssignment.subscription_id
+            )
+            .all()
+        )
+
+        assignment_counts_by_subscription = {
+            row.subscription_id: int(
+                row.meal_assignments_count
+            )
+            for row in assignment_rows
+        }
 
     if user_ids:
         subscription_rows = (
@@ -830,6 +928,72 @@ def list_users(
     data = []
 
     for user in users:
+        subscription_data = (
+            subscriptions_information.get(user.id)
+        )
+
+        subscription_id = (
+            subscription_data.get("id")
+            if subscription_data
+            else None
+        )
+
+        subscription_status = (
+            subscription_data.get("status")
+            if subscription_data
+            else None
+        )
+
+        payment_status = (
+            subscription_data.get("payment_status")
+            if subscription_data
+            else None
+        )
+
+        meal_assignments_count = (
+            assignment_counts_by_subscription.get(
+                subscription_id,
+                0,
+            )
+            if subscription_id is not None
+            else 0
+        )
+
+        has_active_paid_subscription = (
+            subscription_status
+            == SubscriptionStatus.ACTIVE.value
+            and payment_status
+            == PaymentStatus.PAID.value
+        )
+
+        has_meal_assignments = (
+            meal_assignments_count > 0
+        )
+
+        if not has_active_paid_subscription:
+            customer_workflow = (
+                CustomerMealWorkflow.NOT_PAID.value
+            )
+            next_action = "complete_payment"
+            can_assign_meals = False
+
+        elif not has_meal_assignments:
+            customer_workflow = (
+                CustomerMealWorkflow
+                .PAID_WITHOUT_MEALS
+                .value
+            )
+            next_action = "assign_meals"
+            can_assign_meals = True
+
+        else:
+            customer_workflow = (
+                CustomerMealWorkflow
+                .PAID_WITH_MEALS
+                .value
+            )
+            next_action = "view_meal_assignments"
+            can_assign_meals = True
         data.append(
             {
                 "id": user.id,
@@ -874,11 +1038,21 @@ def list_users(
                         0.0,
                     )
                 ),
-                "subscription": (
-                    subscriptions_information.get(
-                        user.id
-                    )
-                ),
+                "subscription": subscription_data,
+                "meal_allocation": {
+                    "has_active_paid_subscription": (
+                        has_active_paid_subscription
+                    ),
+                    "has_meal_assignments": (
+                        has_meal_assignments
+                    ),
+                    "meal_assignments_count": (
+                        meal_assignments_count
+                    ),
+                    "workflow": customer_workflow,
+                    "next_action": next_action,
+                    "can_assign_meals": can_assign_meals,
+                },
             }
         )
 
