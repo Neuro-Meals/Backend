@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.db.database import SessionLocal
+from app.db.seed_permissions import seed_permissions
+from app.db.seed_rbac import seed_rbac
 
 from app.modules.users.models import User, UserRole
 
@@ -104,6 +106,105 @@ ADMIN_PHONE = get_required_setting(
 ADMIN_PASSWORD = get_required_setting(
     "SEED_ADMIN_PASSWORD",
 )
+
+
+STAFF_PASSWORD = get_optional_setting(
+    "SEED_STAFF_PASSWORD",
+    ADMIN_PASSWORD,
+)
+
+CUSTOMER_PASSWORD = get_optional_setting(
+    "SEED_CUSTOMER_PASSWORD",
+    ADMIN_PASSWORD,
+)
+
+
+FRONTEND_USER_DATA = [
+    {
+        "first_name": "Noura",
+        "last_name": "Nutrition",
+        "email": get_optional_setting(
+            "SEED_NUTRITION_MANAGER_EMAIL",
+            "nutrition.manager@nutriomeals.com",
+        ).lower(),
+        "phone": get_optional_setting(
+            "SEED_NUTRITION_MANAGER_PHONE",
+            "+966500000101",
+        ),
+        "password": STAFF_PASSWORD,
+        "role_name": "nutrition_manager",
+    },
+    {
+        "first_name": "Dalia",
+        "last_name": "Delivery",
+        "email": get_optional_setting(
+            "SEED_DELIVERY_MANAGER_EMAIL",
+            "delivery.manager@nutriomeals.com",
+        ).lower(),
+        "phone": get_optional_setting(
+            "SEED_DELIVERY_MANAGER_PHONE",
+            "+966500000102",
+        ),
+        "password": STAFF_PASSWORD,
+        "role_name": "delivery_manager",
+    },
+    {
+        "first_name": "Faris",
+        "last_name": "Finance",
+        "email": get_optional_setting(
+            "SEED_FINANCE_MANAGER_EMAIL",
+            "finance.manager@nutriomeals.com",
+        ).lower(),
+        "phone": get_optional_setting(
+            "SEED_FINANCE_MANAGER_PHONE",
+            "+966500000103",
+        ),
+        "password": STAFF_PASSWORD,
+        "role_name": "finance_manager",
+    },
+    {
+        "first_name": "Khalid",
+        "last_name": "Kitchen",
+        "email": get_optional_setting(
+            "SEED_CHEF_EMAIL",
+            "chef@nutriomeals.com",
+        ).lower(),
+        "phone": get_optional_setting(
+            "SEED_CHEF_PHONE",
+            "+966500000104",
+        ),
+        "password": STAFF_PASSWORD,
+        "role_name": "chef",
+    },
+    {
+        "first_name": "Omar",
+        "last_name": "Driver",
+        "email": get_optional_setting(
+            "SEED_DRIVER_EMAIL",
+            "driver@nutriomeals.com",
+        ).lower(),
+        "phone": get_optional_setting(
+            "SEED_DRIVER_PHONE",
+            "+966500000105",
+        ),
+        "password": STAFF_PASSWORD,
+        "role_name": "driver",
+    },
+    {
+        "first_name": "Amina",
+        "last_name": "Customer",
+        "email": get_optional_setting(
+            "SEED_CUSTOMER_EMAIL",
+            "customer@nutriomeals.com",
+        ).lower(),
+        "phone": get_optional_setting(
+            "SEED_CUSTOMER_PHONE",
+            "+966500000106",
+        ),
+        "password": CUSTOMER_PASSWORD,
+        "role_name": "customer",
+    },
+]
 
 CATEGORY_DATA = [
     {
@@ -565,6 +666,35 @@ def validate_seed_configuration() -> None:
             "phone numbers."
         )
 
+    if len(STAFF_PASSWORD) < 8:
+        raise RuntimeError(
+            "SEED_STAFF_PASSWORD must contain at least 8 characters."
+        )
+
+    if len(CUSTOMER_PASSWORD) < 8:
+        raise RuntimeError(
+            "SEED_CUSTOMER_PASSWORD must contain at least 8 characters."
+        )
+
+    emails = [SUPER_ADMIN_EMAIL, ADMIN_EMAIL] + [
+        str(item["email"]).strip().lower()
+        for item in FRONTEND_USER_DATA
+    ]
+    phones = [SUPER_ADMIN_PHONE, ADMIN_PHONE] + [
+        str(item["phone"]).strip()
+        for item in FRONTEND_USER_DATA
+    ]
+
+    if len(emails) != len(set(emails)):
+        raise RuntimeError(
+            "Duplicate email addresses exist in the seed configuration."
+        )
+
+    if len(phones) != len(set(phones)):
+        raise RuntimeError(
+            "Duplicate phone numbers exist in the seed configuration."
+        )
+
     allowed_email_domains = (
         "@gmail.com",
         "@nutriomeals.com",
@@ -677,6 +807,40 @@ def create_or_update_admin_user(
     db.flush()
 
     return user, created
+
+
+def seed_frontend_users(
+    db: Session,
+) -> tuple[list[User], int, int]:
+    users: list[User] = []
+    created_count = 0
+    updated_count = 0
+
+    for data in FRONTEND_USER_DATA:
+        role = resolve_enum_member(
+            UserRole,
+            [str(data["role_name"])],
+        )
+
+        user, created = create_or_update_admin_user(
+            db=db,
+            first_name=str(data["first_name"]),
+            last_name=str(data["last_name"]),
+            email=str(data["email"]),
+            phone=str(data["phone"]),
+            password=str(data["password"]),
+            role=role,
+        )
+
+        users.append(user)
+
+        if created:
+            created_count += 1
+        else:
+            updated_count += 1
+
+    return users, created_count, updated_count
+
 
 def get_category_by_name(
     db: Session,
@@ -1112,6 +1276,12 @@ def seed_production_data() -> None:
         )
 
         (
+            frontend_users,
+            frontend_users_created,
+            frontend_users_updated,
+        ) = seed_frontend_users(db)
+
+        (
             categories,
             categories_created,
             categories_updated,
@@ -1144,6 +1314,11 @@ def seed_production_data() -> None:
         )
 
         db.commit()
+
+        # Populate permissions, roles and user-role links only after the
+        # users above are committed and visible to the RBAC session.
+        seed_permissions()
+        seed_rbac()
 
         db.refresh(super_admin)
         db.refresh(admin)
@@ -1184,6 +1359,18 @@ def seed_production_data() -> None:
         print(f"  Role: {admin.role.value}")
         print()
 
+        print("Frontend test users:")
+        print(f"  Created: {frontend_users_created}")
+        print(f"  Updated: {frontend_users_updated}")
+
+        for user in frontend_users:
+            print(
+                f"  - {user.role.value}: {user.email} "
+                f"(verified={user.is_verified}, active={user.is_active})"
+            )
+
+        print()
+
         print("Meal categories:")
         print(f"  Created: {categories_created}")
         print(f"  Updated: {categories_updated}")
@@ -1212,8 +1399,10 @@ def seed_production_data() -> None:
         print()
 
         print(
-            "No customers, subscriptions, payments, orders, "
-            "deliveries or notifications were created."
+            "One frontend customer account was created. "
+            "Subscriptions, payments, orders, deliveries and "
+            "notifications were not created because their current "
+            "model fields must be seeded from the live application flow."
         )
         print()
 
