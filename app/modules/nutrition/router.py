@@ -12,7 +12,6 @@ from app.modules.meal_selections.schemas import (
     MealSelectionUpdate,
 )
 from app.modules.meals.models import Meal
-from app.modules.plans.models import MealPlanItem
 from app.modules.subscriptions.models import Subscription
 from app.modules.users.models import User, UserRole
 
@@ -215,23 +214,6 @@ def assign_meals_to_customer_subscription(
         meal.id for meal in available_meals
     }
 
-    # Fetch meals allowed in this exact plan slot in one query.
-    allowed_plan_items = (
-        db.query(MealPlanItem)
-        .filter(
-            MealPlanItem.plan_id == subscription.plan_id,
-            MealPlanItem.meal_id.in_(requested_meal_ids),
-            MealPlanItem.day_number == payload.day_number,
-            MealPlanItem.meal_time == payload.meal_time,
-            MealPlanItem.is_active.is_(True),
-        )
-        .all()
-    )
-
-    allowed_meal_ids = {
-        item.meal_id for item in allowed_plan_items
-    }
-
     # Find meals already assigned in this slot.
     existing_selections = (
         db.query(MealSelection)
@@ -260,18 +242,6 @@ def assign_meals_to_customer_subscription(
                     "meal_id": meal_id,
                     "reason": (
                         "Meal was not found or is unavailable"
-                    ),
-                }
-            )
-            continue
-
-        if meal_id not in allowed_meal_ids:
-            errors.append(
-                {
-                    "meal_id": meal_id,
-                    "reason": (
-                        "Meal is not available in this "
-                        "plan slot"
                     ),
                 }
             )
@@ -418,27 +388,6 @@ def update_customer_meal_selection(
         raise HTTPException(
             status_code=404,
             detail="Meal not found or unavailable",
-        )
-
-    allowed_meal = (
-        db.query(MealPlanItem)
-        .filter(
-            MealPlanItem.plan_id == selection.plan_id,
-            MealPlanItem.meal_id == new_meal_id,
-            MealPlanItem.day_number == new_day_number,
-            MealPlanItem.meal_time == new_meal_time,
-            MealPlanItem.is_active.is_(True),
-        )
-        .first()
-    )
-
-    if not allowed_meal:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "This meal is not available in "
-                "this plan slot"
-            ),
         )
 
     duplicate = (

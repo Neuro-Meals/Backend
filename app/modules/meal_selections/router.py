@@ -10,7 +10,6 @@ from app.modules.meal_selections.schemas import (
     MealSelectionUpdate,
 )
 from app.modules.meals.models import Meal
-from app.modules.plans.models import MealPlanItem
 from app.modules.subscriptions.models import Subscription, SubscriptionStatus
 from app.modules.users.models import User, UserRole
 
@@ -43,23 +42,6 @@ def create_meal_selection(
         Meal.id == payload.meal_id,
         Meal.is_available == True,
     ).first()
-
-    if not meal:
-        raise HTTPException(status_code=404, detail="Meal not found or unavailable")
-
-    allowed_meal = db.query(MealPlanItem).filter(
-        MealPlanItem.plan_id == subscription.plan_id,
-        MealPlanItem.meal_id == payload.meal_id,
-        MealPlanItem.day_number == payload.day_number,
-        MealPlanItem.meal_time == payload.meal_time,
-        MealPlanItem.is_active == True,
-    ).first()
-
-    if not allowed_meal:
-        raise HTTPException(
-            status_code=400,
-            detail="This meal is not available in this plan slot",
-        )
 
     existing = db.query(MealSelection).filter(
         MealSelection.user_id == current_user.id,
@@ -123,21 +105,6 @@ def update_meal_selection(
         raise HTTPException(status_code=404, detail="Meal selection not found")
 
     update_data = payload.model_dump(exclude_unset=True)
-
-    if "meal_id" in update_data and update_data["meal_id"] is not None:
-        allowed_meal = db.query(MealPlanItem).filter(
-            MealPlanItem.plan_id == selection.plan_id,
-            MealPlanItem.meal_id == update_data["meal_id"],
-            MealPlanItem.day_number == selection.day_number,
-            MealPlanItem.meal_time == selection.meal_time,
-            MealPlanItem.is_active == True,
-        ).first()
-
-        if not allowed_meal:
-            raise HTTPException(
-                status_code=400,
-                detail="This meal is not available in this plan slot",
-            )
 
     for field, value in update_data.items():
         setattr(selection, field, value)
