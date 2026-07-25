@@ -1217,6 +1217,171 @@ def build_delivery_query(
 
     return query.distinct()
 
+def list_deliveries(
+    db: Session,
+    search: str | None = None,
+    delivery_status: DeliveryStatus | None = None,
+    customer_id: int | None = None,
+    driver_id: int | None = None,
+    order_id: int | None = None,
+    delivery_date: date | None = None,
+    page: int = 1,
+    limit: int = 10,
+) -> tuple[list[Delivery], int]:
+    """
+    Return a paginated list of deliveries for management users.
+    """
+
+    query = build_delivery_query(
+        db=db,
+        search=search,
+        delivery_status=delivery_status,
+        customer_id=customer_id,
+        driver_id=driver_id,
+        order_id=order_id,
+        scheduled_date=delivery_date,
+    )
+
+    total = query.count()
+
+    deliveries = (
+        query.order_by(
+            Order.delivery_date.desc(),
+            Order.delivery_time.asc(),
+            Delivery.id.desc(),
+        )
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    return deliveries, total
+
+
+def get_recent_deliveries(
+    db: Session,
+    limit: int = 10,
+) -> list[Delivery]:
+    """
+    Return the most recently created deliveries.
+    """
+
+    return (
+        build_delivery_query(db=db)
+        .order_by(
+            Delivery.created_at.desc(),
+            Delivery.id.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+
+
+def get_customer_delivery_history(
+    db: Session,
+    customer_id: int,
+    delivery_status: DeliveryStatus | None = None,
+    delivery_date: date | None = None,
+    page: int = 1,
+    limit: int = 10,
+) -> tuple[list[Delivery], int]:
+    """
+    Return a customer's paginated delivery history.
+    """
+
+    query = build_delivery_query(
+        db=db,
+        customer_id=customer_id,
+        delivery_status=delivery_status,
+        scheduled_date=delivery_date,
+    )
+
+    total = query.count()
+
+    deliveries = (
+        query.order_by(
+            Order.delivery_date.desc(),
+            Order.delivery_time.desc(),
+            Delivery.id.desc(),
+        )
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    return deliveries, total
+
+
+def get_customer_current_delivery(
+    db: Session,
+    customer_id: int,
+) -> Delivery | None:
+    """
+    Return the customer's nearest active delivery.
+    """
+
+    active_statuses = {
+        DeliveryStatus.PENDING,
+        DeliveryStatus.READY_FOR_PICKUP,
+        DeliveryStatus.PICKED_UP,
+        DeliveryStatus.OUT_FOR_DELIVERY,
+    }
+
+    return (
+        build_delivery_query(
+            db=db,
+            customer_id=customer_id,
+        )
+        .filter(
+            Delivery.status.in_(active_statuses),
+        )
+        .order_by(
+            Order.delivery_date.asc(),
+            Order.delivery_time.asc(),
+            Delivery.id.asc(),
+        )
+        .first()
+    )
+
+
+def ensure_delivery_access(
+    delivery: Delivery,
+    current_user: User,
+) -> None:
+    """
+    Allow management users, the customer, or the assigned driver.
+    """
+
+    role = current_user.role
+    role_value = enum_value(role)
+
+    management_roles = {
+        enum_value(UserRole.ADMIN),
+        enum_value(UserRole.SUPER_ADMIN),
+        enum_value(UserRole.DELIVERY_MANAGER),
+    }
+
+    if role_value in management_roles:
+        return
+
+    if delivery.order is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Delivery order relationship is unavailable",
+        )
+
+    if role_value == enum_value(UserRole.DRIVER):
+        ensure_driver_can_access_delivery(
+            delivery=delivery,
+            driver_id=current_user.id,
+        )
+        return
+
+    ensure_customer_can_access_delivery(
+        delivery=delivery,
+        customer_id=current_user.id,
+    )
+
 
 def build_driver_delivery_query(
     db: Session,
@@ -1304,35 +1469,61 @@ def get_driver_tomorrow_deliveries(
 def get_driver_delivery_history(
     db: Session,
     driver_id: int,
-) -> list[Delivery]:
+    delivery_status: DeliveryStatus | None = None,
+    delivery_date: date | None = None,
+    page: int | None = None,
+    limit: int | None = None,
+):
     """
-    Return completed, failed, and cancelled driver deliveries.
+    Return driver delivery history.
+
+    When page and limit are provided, return:
+        deliveries, total
+
+    Otherwise return a plain list for the driver dashboard.
     """
 
-    return (
-        build_driver_delivery_query(
-            db=db,
-            driver_id=driver_id,
-        )
-        .filter(
-            Delivery.status.in_(
-                {
-                    DeliveryStatus.DELIVERED,
-                    DeliveryStatus.FAILED,
-                    DeliveryStatus.CANCELLED,
-                }
-            )
-        )
-        .order_by(
-            Order.delivery_date.desc(),
-            Order.delivery_time.desc(),
-            Delivery.id.desc(),
-        )
-        .all()
+    completed_statuses = {
+        DeliveryStatus.DELIVERED,
+        DeliveryStatus.FAILED,
+        DeliveryStatus.CANCELLED,
+    }
+
+    query = build_delivery_query(
+        db=db,
+        driver_id=driver_id,
+        delivery_status=delivery_status,
+        scheduled_date=delivery_date,
     )
+
+    if delivery_status is None:
+        query = query.filter(
+            Delivery.status.in_(completed_statuses)
+        )
+
+    query = query.order_by(
+        Order.delivery_date.desc(),
+        Order.delivery_time.desc(),
+        Delivery.id.desc(),
+    )
+
+    if page is not None and limit is not None:
+        total = query.count()
+
+        deliveries = (
+            query.offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+
+        return deliveries, total
+
+    return query.all()
+
 
 def get_delivery_statistics(
     db: Session,
+    delivery_date: date | None = None,
 ) -> dict:
     """
     Return delivery operations statistics.
@@ -1342,7 +1533,7 @@ def get_delivery_statistics(
     that have not yet been picked up.
     """
 
-    today = utc_now().date()
+    today = delivery_date or utc_now().date()
     today_start = start_of_day(today)
     tomorrow_start = end_of_day(today)
 
