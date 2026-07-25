@@ -3,6 +3,16 @@ from __future__ import annotations
 from datetime import date, time
 from math import ceil
 from typing import Any
+from datetime import date, timedelta
+
+from app.modules.meal_assignments.customer_schemas import (
+    CustomerMealScheduleResponse,
+    CustomerTodayMealResponse,
+    CustomerUpcomingMealResponse,
+)
+from app.modules.meal_assignments.customer_service import (
+    build_customer_schedule,
+)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -418,71 +428,113 @@ def create_meal_assignments(
 
 @router.get(
     "/my",
-    response_model=MealAssignmentListResponse,
+    response_model=CustomerMealScheduleResponse,
 )
-def get_my_assignments(
-    delivery_date_from: date | None = Query(
+def get_my_meal_schedule(
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    subscription_id: int | None = Query(
         default=None,
-    ),
-    delivery_date_to: date | None = Query(
-        default=None,
-    ),
-    meal_category_id: int | None = Query(
-        default=None,
-        gt=0,
-    ),
-    active_only: bool = Query(
-        default=True,
-    ),
-    page: int = Query(
-        default=1,
         ge=1,
-    ),
-    page_size: int = Query(
-        default=20,
-        ge=1,
-        le=100,
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Return assignments belonging to the logged-in customer.
+    Return the logged-in customer's complete grouped meal schedule.
+
+    Each meal category includes:
+    - selected meals
+    - planned driver
+    - delivery preference and time
+    - order status, when an order has been generated
+    - delivery tracking status, when delivery tracking exists
     """
 
-    query = assignment_query(db).filter(
-        MealAssignment.user_id == current_user.id,
-    )
-
-    if delivery_date_from is not None:
-        query = query.filter(
-            MealAssignment.delivery_date
-            >= delivery_date_from,
-        )
-
-    if delivery_date_to is not None:
-        query = query.filter(
-            MealAssignment.delivery_date
-            <= delivery_date_to,
-        )
-
-    if meal_category_id is not None:
-        query = query.filter(
-            MealAssignment.meal_category_id
-            == meal_category_id,
-        )
-
-    if active_only:
-        query = query.filter(
-            MealAssignment.is_active.is_(True),
-        )
-
-    return paginate_assignments(
+    return build_customer_schedule(
         db=db,
-        query=query,
-        page=page,
-        page_size=page_size,
+        user_id=current_user.id,
+        start_date=start_date,
+        end_date=end_date,
+        subscription_id=subscription_id,
     )
+
+
+@router.get(
+    "/my/today",
+    response_model=CustomerTodayMealResponse,
+)
+def get_my_meals_today(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return today's breakfast, lunch, dinner and snack assignments.
+    """
+
+    today = date.today()
+
+    schedule = build_customer_schedule(
+        db=db,
+        user_id=current_user.id,
+        start_date=today,
+        end_date=today,
+    )
+
+    day = schedule["days"][0] if schedule["days"] else None
+
+    return {
+        "success": True,
+        "message": (
+            "Today's assigned meals were retrieved successfully."
+            if day is not None
+            else "You do not have assigned meals for today."
+        ),
+        "date": today,
+        "has_assignments": day is not None,
+        "day": day,
+    }
+
+
+@router.get(
+    "/my/upcoming",
+    response_model=CustomerUpcomingMealResponse,
+)
+def get_my_upcoming_meals(
+    days: int = Query(
+        default=7,
+        ge=1,
+        le=90,
+        description="Number of calendar days to include, starting today.",
+    ),
+    subscription_id: int | None = Query(
+        default=None,
+        ge=1,
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return assigned meals from today through the requested number of days.
+    """
+
+    start = date.today()
+    end = start + timedelta(days=days - 1)
+
+    schedule = build_customer_schedule(
+        db=db,
+        user_id=current_user.id,
+        start_date=start,
+        end_date=end,
+        subscription_id=subscription_id,
+    )
+
+    schedule["message"] = (
+        "Your upcoming assigned meals were retrieved successfully."
+    )
+    schedule["requested_limit_days"] = days
+
+    return schedule
 
 
 @router.get(

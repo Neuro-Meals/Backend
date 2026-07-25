@@ -1,7 +1,15 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
+from app.modules.nutrition.schemas import (
+    MenuGenerationRequest,
+    MenuGenerationResponse,
+)
+from app.modules.nutrition.services.menu_generator import (
+    MenuGenerator,
+)
 from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.meal_selections.models import MealSelection
@@ -12,35 +20,41 @@ from app.modules.meal_selections.schemas import (
     MealSelectionUpdate,
 )
 from app.modules.meals.models import Meal
-from app.modules.subscriptions.models import Subscription
-from app.modules.users.models import User, UserRole
-import logging
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
-
-from app.modules.meal_selections.models import MealSelection
-from app.modules.meal_selections.schemas import (
-    DayMealAssignmentRequest,
-    DayMealAssignmentResponse,
+from app.modules.nutrition.schemas import (
+    MenuGenerationRequest,
+    MenuGenerationResponse,
 )
-from app.modules.meals.models import Meal
+from app.modules.nutrition.services.menu_generator import (
+    MenuGenerator,
+)
 from app.modules.subscriptions.models import (
     Subscription,
     SubscriptionStatus,
 )
 from app.modules.users.models import User, UserRole
+
+
 logger = logging.getLogger(__name__)
+
 
 router = APIRouter(
     prefix="/nutrition",
     tags=["Nutritionist"],
 )
 
+
 MEAL_TIMES = (
     "breakfast",
     "lunch",
     "dinner",
     "snack",
+)
+
+
+NUTRITION_ROLES = (
+    UserRole.ADMIN,
+    UserRole.SUPER_ADMIN,
+    UserRole.NUTRITION_MANAGER,
 )
 
 
@@ -397,6 +411,52 @@ def assign_meals_to_customer_subscription(
         "created": serialized_selections,
         "errors": errors,
     }
+    
+    
+@router.post(
+    "/subscriptions/{subscription_id}/generate-menu",
+    response_model=MenuGenerationResponse,
+)
+def generate_subscription_menu(
+    subscription_id: int,
+    payload: MenuGenerationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(*NUTRITION_ROLES)
+    ),
+):
+    """
+    Generate a customer's meal menu.
+
+    Phase 1 supports:
+        - single_day
+
+    Future phases will support:
+        - repeat_week
+        - custom_weeks
+    """
+
+    subscription = (
+        db.query(Subscription)
+        .filter(
+            Subscription.id == subscription_id,
+        )
+        .first()
+    )
+
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found",
+        )
+
+    generator = MenuGenerator(
+        db=db,
+        subscription=subscription,
+        admin=current_user,
+    )
+
+    return generator.generate(payload)    
 
 
 @router.patch(
@@ -573,25 +633,40 @@ def get_subscription_assigned_meals(
         "day_number": day_number,
         "assigned_meals": grouped,
     }
-
-@router.get(
-    "/subscriptions/{subscription_id}/assigned-meals",
+    
+@router.post(
+    "/subscriptions/{subscription_id}/generate-menu",
+    response_model=MenuGenerationResponse,
 )
-def get_subscription_assigned_meals(
+def generate_subscription_menu(
     subscription_id: int,
-    day_number: int | None = None,
+    payload: MenuGenerationRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(
-        require_roles(
-            UserRole.ADMIN,
-            UserRole.SUPER_ADMIN,
-            UserRole.NUTRITION_MANAGER,
-        )
+        require_roles(*NUTRITION_ROLES)
     ),
 ):
+    """
+    Generate a menu for a paid customer subscription.
+
+    Supported modes:
+
+        single_day
+            Generate one absolute subscription day.
+
+        repeat_week
+            Create one seven-day subscription template and repeat it
+            until the subscription ends.
+
+        custom_weeks
+            Create a different menu for each subscription week.
+    """
+
     subscription = (
         db.query(Subscription)
-        .filter(Subscription.id == subscription_id)
+        .filter(
+            Subscription.id == subscription_id,
+        )
         .first()
     )
 
@@ -601,56 +676,13 @@ def get_subscription_assigned_meals(
             detail="Subscription not found",
         )
 
-    query = (
-        db.query(MealSelection, Meal)
-        .join(
-            Meal,
-            Meal.id == MealSelection.meal_id,
-        )
-        .filter(
-            MealSelection.subscription_id == subscription_id,
-        )
+    generator = MenuGenerator(
+        db=db,
+        subscription=subscription,
+        admin=current_user,
     )
 
-    if day_number is not None:
-        query = query.filter(
-            MealSelection.day_number == day_number,
-        )
-
-    results = (
-        query.order_by(
-            MealSelection.day_number.asc(),
-            MealSelection.meal_time.asc(),
-            MealSelection.id.asc(),
-        )
-        .all()
-    )
-
-    grouped: dict[str, list[dict]] = {
-        meal_time: []
-        for meal_time in MEAL_TIMES
-    }
-
-    for selection, meal in results:
-        grouped.setdefault(
-            selection.meal_time,
-            [],
-        ).append(
-            serialize_assigned_meal(
-                selection,
-                meal,
-            )
-        )
-
-    return {
-        "success": True,
-        "subscription_id": subscription.id,
-        "user_id": subscription.user_id,
-        "plan_id": subscription.plan_id,
-        "day_number": day_number,
-        "assigned_meals": grouped,
-    }
-    
+    return generator.generate(payload)    
 
 @router.delete("/meal-selections/{selection_id}")
 def delete_customer_meal_selection(

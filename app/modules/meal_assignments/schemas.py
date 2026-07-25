@@ -2,7 +2,12 @@ from datetime import date, datetime, time
 
 from pydantic import BaseModel, Field, model_validator
 
+from __future__ import annotations
 
+from datetime import date, datetime, time
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 class MealAssignmentItemCreate(BaseModel):
     meal_id: int = Field(
         ...,
@@ -429,6 +434,127 @@ class KitchenDailyResponse(BaseModel):
 
     categories: list[KitchenCategorySummary]
     assignments: list[MealAssignmentResponse]
+    
+    
+class CustomerMealSummary(BaseModel):
+    id: int
+    name_en: str
+    name_ar: str | None = None
+    description_en: str | None = None
+    description_ar: str | None = None
+
+    calories: float | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
+    fiber_g: float | None = None
+    sugar_g: float | None = None
+    sodium_mg: float | None = None
+
+    quantity: int = 1
+    item_notes: str | None = None
+    ingredients: list[str] = Field(default_factory=list)
+    allergens: list[str] = Field(default_factory=list)
+    diet_tags: list[str] = Field(default_factory=list)
+    image_url: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CustomerDriverSummary(BaseModel):
+    id: int
+    first_name: str | None = None
+    last_name: str | None = None
+    full_name: str | None = None
+    phone: str | None = None
+
+
+class CustomerDeliveryPreferenceSummary(BaseModel):
+    id: int
+    place_type: str | None = None
+    place_name: str | None = None
+    city: str | None = None
+    delivery_area: str | None = None
+    delivery_address: str | None = None
+    preferred_delivery_time: time | None = None
+    delivery_note: str | None = None
+
+
+class CustomerOrderSummary(BaseModel):
+    id: int
+    order_number: str
+    status: str
+    total_amount: float
+    created_at: datetime
+
+
+class CustomerDeliverySummary(BaseModel):
+    id: int
+    status: str
+
+    ready_for_pickup_at: datetime | None = None
+    picked_up_at: datetime | None = None
+    out_for_delivery_at: datetime | None = None
+    delivered_at: datetime | None = None
+    failed_at: datetime | None = None
+    failure_reason: str | None = None
+
+
+class CustomerMealTimeAssignment(BaseModel):
+    assignment_id: int
+    category_id: int
+    category_key: str
+    category_name_en: str
+    category_name_ar: str | None = None
+
+    delivery_date: date
+    delivery_time: time
+    assignment_notes: str | None = None
+
+    meals: list[CustomerMealSummary] = Field(default_factory=list)
+    driver: CustomerDriverSummary | None = None
+    delivery_preference: CustomerDeliveryPreferenceSummary | None = None
+    order: CustomerOrderSummary | None = None
+    delivery: CustomerDeliverySummary | None = None
+
+
+class CustomerMealDay(BaseModel):
+    day_number: int | None = None
+    delivery_date: date
+
+    breakfast: CustomerMealTimeAssignment | None = None
+    lunch: CustomerMealTimeAssignment | None = None
+    dinner: CustomerMealTimeAssignment | None = None
+    snack: CustomerMealTimeAssignment | None = None
+
+    other_categories: dict[str, CustomerMealTimeAssignment] = Field(
+        default_factory=dict
+    )
+
+
+class CustomerMealScheduleResponse(BaseModel):
+    success: bool = True
+    message: str
+
+    total_days: int
+    total_assignments: int
+
+    start_date: date | None = None
+    end_date: date | None = None
+
+    days: list[CustomerMealDay] = Field(default_factory=list)
+
+
+class CustomerTodayMealResponse(BaseModel):
+    success: bool = True
+    message: str
+    date: date
+    has_assignments: bool
+    day: CustomerMealDay | None = None
+
+
+class CustomerUpcomingMealResponse(CustomerMealScheduleResponse):
+    requested_limit_days: int    
 
 
 class MealAssignmentDeleteResponse(BaseModel):

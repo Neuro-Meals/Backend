@@ -23,6 +23,414 @@ from app.modules.users.models import (
     UserRole,
 )
 
+from collections import defaultdict
+from datetime import date, datetime
+import re
+
+from app.modules.deliveries.models import Delivery
+from app.modules.orders.models import Order
+from app.modules.subscriptions.models import Subscription
+
+
+STANDARD_CATEGORY_KEYS = {
+    "breakfast",
+    "lunch",
+    "dinner",
+    "snack",
+}
+
+
+def _enum_value(value: Any) -> Any:
+    if value is None:
+        return None
+    return value.value if hasattr(value, "value") else value
+
+
+def _date_only(value: date | datetime | None) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    return value
+
+
+def _full_name(user: Any) -> str | None:
+    if user is None:
+        return None
+
+    first_name = getattr(user, "first_name", None) or ""
+    last_name = getattr(user, "last_name", None) or ""
+    value = f"{first_name} {last_name}".strip()
+    return value or None
+
+
+def _category_key(category: Any) -> str:
+    raw_name = (
+        getattr(category, "name_en", None)
+        or getattr(category, "name", None)
+        or f"category_{getattr(category, 'id', 'unknown')}"
+    )
+
+    normalized = re.sub(
+        r"[^a-z0-9]+",
+        "_",
+        str(raw_name).strip().lower(),
+    ).strip("_")
+
+    aliases = {
+        "break_fast": "breakfast",
+        "morning_meal": "breakfast",
+        "midday_meal": "lunch",
+        "evening_meal": "dinner",
+        "snacks": "snack",
+    }
+
+    return aliases.get(normalized, normalized)
+
+
+def _meal_summary(item: MealAssignmentItem) -> dict[str, Any]:
+    meal = item.meal
+
+    if meal is None:
+        return {
+            "id": item.meal_id,
+            "name_en": "Unavailable meal",
+            "quantity": item.quantity,
+            "item_notes": item.notes,
+        }
+
+    return {
+        "id": meal.id,
+        "name_en": getattr(meal, "name_en", None)
+        or getattr(meal, "name", "Meal"),
+        "name_ar": getattr(meal, "name_ar", None),
+        "description_en": getattr(meal, "description_en", None)
+        or getattr(meal, "description", None),
+        "description_ar": getattr(meal, "description_ar", None),
+        "calories": getattr(meal, "calories", None),
+        "protein_g": getattr(
+            meal,
+            "protein_g",
+            getattr(meal, "protein", None),
+        ),
+        "carbs_g": getattr(
+            meal,
+            "carbs_g",
+            getattr(meal, "carbs", None),
+        ),
+        "fat_g": getattr(
+            meal,
+            "fat_g",
+            getattr(meal, "fat", None),
+        ),
+        "fiber_g": getattr(meal, "fiber_g", None),
+        "sugar_g": getattr(meal, "sugar_g", None),
+        "sodium_mg": getattr(meal, "sodium_mg", None),
+        "quantity": item.quantity,
+        "item_notes": item.notes,
+        "ingredients": getattr(meal, "ingredients", None) or [],
+        "allergens": getattr(meal, "allergens", None) or [],
+        "diet_tags": getattr(meal, "diet_tags", None) or [],
+        "image_url": getattr(meal, "image_url", None),
+    }
+
+
+def _driver_summary(driver: Any) -> dict[str, Any] | None:
+    if driver is None:
+        return None
+
+    return {
+        "id": driver.id,
+        "first_name": getattr(driver, "first_name", None),
+        "last_name": getattr(driver, "last_name", None),
+        "full_name": _full_name(driver),
+        "phone": getattr(driver, "phone", None),
+    }
+
+
+def _preference_summary(preference: Any) -> dict[str, Any] | None:
+    if preference is None:
+        return None
+
+    return {
+        "id": preference.id,
+        "place_type": _enum_value(
+            getattr(preference, "place_type", None)
+        ),
+        "place_name": getattr(preference, "place_name", None),
+        "city": getattr(preference, "city", None),
+        "delivery_area": getattr(
+            preference,
+            "delivery_area",
+            None,
+        ),
+        "delivery_address": getattr(
+            preference,
+            "delivery_address",
+            None,
+        ),
+        "preferred_delivery_time": getattr(
+            preference,
+            "preferred_delivery_time",
+            None,
+        ),
+        "delivery_note": getattr(
+            preference,
+            "delivery_note",
+            None,
+        ),
+    }
+
+
+def _order_summary(order: Order | None) -> dict[str, Any] | None:
+    if order is None:
+        return None
+
+    return {
+        "id": order.id,
+        "order_number": order.order_number,
+        "status": _enum_value(order.status),
+        "total_amount": float(order.total_amount or 0),
+        "created_at": order.created_at,
+    }
+
+
+def _delivery_summary(
+    delivery: Delivery | None,
+) -> dict[str, Any] | None:
+    if delivery is None:
+        return None
+
+    return {
+        "id": delivery.id,
+        "status": _enum_value(delivery.status),
+        "ready_for_pickup_at": delivery.ready_for_pickup_at,
+        "picked_up_at": delivery.picked_up_at,
+        "out_for_delivery_at": delivery.out_for_delivery_at,
+        "delivered_at": delivery.delivered_at,
+        "failed_at": delivery.failed_at,
+        "failure_reason": delivery.failure_reason,
+    }
+
+
+def _load_assignments(
+    db: Session,
+    *,
+    user_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    subscription_id: int | None = None,
+) -> list[MealAssignment]:
+    query = (
+        db.query(MealAssignment)
+        .options(
+            selectinload(MealAssignment.items).selectinload(
+                MealAssignmentItem.meal
+            ),
+            selectinload(MealAssignment.category),
+            selectinload(MealAssignment.driver),
+            selectinload(MealAssignment.delivery_preference),
+            selectinload(MealAssignment.subscription),
+        )
+        .filter(
+            MealAssignment.user_id == user_id,
+            MealAssignment.is_active.is_(True),
+        )
+    )
+
+    if start_date is not None:
+        query = query.filter(
+            MealAssignment.delivery_date >= start_date
+        )
+
+    if end_date is not None:
+        query = query.filter(
+            MealAssignment.delivery_date <= end_date
+        )
+
+    if subscription_id is not None:
+        query = query.filter(
+            MealAssignment.subscription_id == subscription_id
+        )
+
+    return (
+        query.order_by(
+            MealAssignment.delivery_date.asc(),
+            MealAssignment.delivery_time.asc(),
+            MealAssignment.meal_category_id.asc(),
+        )
+        .all()
+    )
+
+
+def _load_order_maps(
+    db: Session,
+    assignments: list[MealAssignment],
+) -> tuple[dict[int, Order], dict[int, Delivery]]:
+    assignment_ids = [assignment.id for assignment in assignments]
+
+    if not assignment_ids:
+        return {}, {}
+
+    orders = (
+        db.query(Order)
+        .options(selectinload(Order.delivery))
+        .filter(Order.meal_assignment_id.in_(assignment_ids))
+        .all()
+    )
+
+    order_by_assignment = {
+        order.meal_assignment_id: order
+        for order in orders
+    }
+
+    delivery_by_order = {
+        order.id: order.delivery
+        for order in orders
+        if order.delivery is not None
+    }
+
+    return order_by_assignment, delivery_by_order
+
+
+def _subscription_start_date(
+    assignment: MealAssignment,
+) -> date | None:
+    subscription = assignment.subscription
+
+    if subscription is None:
+        return None
+
+    return _date_only(getattr(subscription, "start_date", None))
+
+
+def _serialize_assignment(
+    assignment: MealAssignment,
+    *,
+    order: Order | None,
+    delivery: Delivery | None,
+) -> dict[str, Any]:
+    category = assignment.category
+    key = _category_key(category)
+
+    return {
+        "assignment_id": assignment.id,
+        "category_id": assignment.meal_category_id,
+        "category_key": key,
+        "category_name_en": (
+            getattr(category, "name_en", None)
+            or getattr(category, "name", key.replace("_", " ").title())
+        ),
+        "category_name_ar": getattr(category, "name_ar", None),
+        "delivery_date": assignment.delivery_date,
+        "delivery_time": assignment.delivery_time,
+        "assignment_notes": assignment.notes,
+        "meals": [
+            _meal_summary(item)
+            for item in assignment.items
+        ],
+        "driver": _driver_summary(assignment.driver),
+        "delivery_preference": _preference_summary(
+            assignment.delivery_preference
+        ),
+        "order": _order_summary(order),
+        "delivery": _delivery_summary(delivery),
+    }
+
+
+def build_customer_schedule(
+    db: Session,
+    *,
+    user_id: int,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    subscription_id: int | None = None,
+) -> dict[str, Any]:
+    if (
+        start_date is not None
+        and end_date is not None
+        and start_date > end_date
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="start_date cannot be after end_date",
+        )
+
+    assignments = _load_assignments(
+        db=db,
+        user_id=user_id,
+        start_date=start_date,
+        end_date=end_date,
+        subscription_id=subscription_id,
+    )
+
+    order_map, delivery_map = _load_order_maps(
+        db=db,
+        assignments=assignments,
+    )
+
+    grouped: dict[date, list[MealAssignment]] = defaultdict(list)
+
+    for assignment in assignments:
+        grouped[assignment.delivery_date].append(assignment)
+
+    days: list[dict[str, Any]] = []
+
+    for delivery_date in sorted(grouped):
+        date_assignments = grouped[delivery_date]
+
+        day_payload: dict[str, Any] = {
+            "day_number": None,
+            "delivery_date": delivery_date,
+            "breakfast": None,
+            "lunch": None,
+            "dinner": None,
+            "snack": None,
+            "other_categories": {},
+        }
+
+        start = _subscription_start_date(date_assignments[0])
+        if start is not None:
+            day_payload["day_number"] = (
+                delivery_date - start
+            ).days + 1
+
+        for assignment in date_assignments:
+            order = order_map.get(assignment.id)
+            delivery = (
+                delivery_map.get(order.id)
+                if order is not None
+                else None
+            )
+
+            serialized = _serialize_assignment(
+                assignment,
+                order=order,
+                delivery=delivery,
+            )
+
+            key = serialized["category_key"]
+
+            if key in STANDARD_CATEGORY_KEYS:
+                day_payload[key] = serialized
+            else:
+                day_payload["other_categories"][key] = serialized
+
+        days.append(day_payload)
+
+    actual_start = days[0]["delivery_date"] if days else start_date
+    actual_end = days[-1]["delivery_date"] if days else end_date
+
+    return {
+        "success": True,
+        "message": "Your assigned meal schedule was retrieved successfully.",
+        "total_days": len(days),
+        "total_assignments": len(assignments),
+        "start_date": actual_start,
+        "end_date": actual_end,
+        "days": days,
+    }
+
 
 def enum_value(value: Any) -> Any:
     """
