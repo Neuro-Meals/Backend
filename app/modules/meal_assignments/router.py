@@ -5,12 +5,13 @@ from math import ceil
 from typing import Any
 from datetime import date, timedelta
 
-from app.modules.meal_assignments.customer_schemas import (
+from app.modules.meal_assignments.schemas import (
     CustomerMealScheduleResponse,
     CustomerTodayMealResponse,
     CustomerUpcomingMealResponse,
 )
-from app.modules.meal_assignments.customer_service import (
+
+from app.modules.meal_assignments.service import (
     build_customer_schedule,
 )
 
