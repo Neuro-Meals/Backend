@@ -44,17 +44,19 @@ def create_meal_selection(
     ).first()
 
     existing = db.query(MealSelection).filter(
-        MealSelection.user_id == current_user.id,
-        MealSelection.subscription_id == subscription.id,
-        MealSelection.day_number == payload.day_number,
-        MealSelection.meal_time == payload.meal_time,
-    ).first()
+    MealSelection.user_id == current_user.id,
+    MealSelection.subscription_id == subscription.id,
+    MealSelection.day_number == payload.day_number,
+    MealSelection.meal_time == payload.meal_time,
+    MealSelection.meal_id == payload.meal_id,
+).first()
 
     if existing:
         raise HTTPException(
             status_code=400,
             detail="You already selected a meal for this day and time",
         )
+        
 
     selection = MealSelection(
         user_id=current_user.id,
@@ -78,15 +80,60 @@ def my_meal_selections(
     current_user: User = Depends(get_current_user),
     subscription_id: int | None = Query(None),
 ):
-    query = db.query(MealSelection).filter(MealSelection.user_id == current_user.id)
+    query = (
+        db.query(MealSelection, Meal)
+        .join(Meal, Meal.id == MealSelection.meal_id)
+        .filter(MealSelection.user_id == current_user.id)
+    )
 
-    if subscription_id:
-        query = query.filter(MealSelection.subscription_id == subscription_id)
+    if subscription_id is not None:
+        query = query.filter(
+            MealSelection.subscription_id == subscription_id
+        )
 
-    return query.order_by(
+    results = query.order_by(
         MealSelection.day_number.asc(),
         MealSelection.meal_time.asc(),
+        MealSelection.id.asc(),
     ).all()
+
+    return [
+        {
+            "id": selection.id,
+            "user_id": selection.user_id,
+            "subscription_id": selection.subscription_id,
+            "plan_id": selection.plan_id,
+            "meal_id": selection.meal_id,
+            "day_number": selection.day_number,
+            "meal_time": selection.meal_time,
+            "is_skipped": selection.is_skipped,
+            "skip_reason": selection.skip_reason,
+            "created_at": selection.created_at,
+            "updated_at": selection.updated_at,
+            "meal": {
+                "id": meal.id,
+                "category_id": meal.category_id,
+                "name_en": meal.name_en,
+                "name_ar": meal.name_ar,
+                "description_en": meal.description_en,
+                "description_ar": meal.description_ar,
+                "calories": meal.calories,
+                "protein_g": meal.protein_g,
+                "carbs_g": meal.carbs_g,
+                "fat_g": meal.fat_g,
+                "fiber_g": meal.fiber_g,
+                "sugar_g": meal.sugar_g,
+                "sodium_mg": meal.sodium_mg,
+                "price": meal.price,
+                "image_url": meal.image_url,
+                "ingredients": meal.ingredients,
+                "allergens": meal.allergens,
+                "diet_tags": meal.diet_tags,
+                "is_available": meal.is_available,
+            },
+        }
+        for selection, meal in results
+    ]
 
 
 @router.put("/{selection_id}", response_model=MealSelectionResponse)
