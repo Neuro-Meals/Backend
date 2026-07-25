@@ -23,29 +23,37 @@ class MealSelection(Base):
     )
 
     user_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey(
+            "users.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     subscription_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("subscriptions.id", ondelete="CASCADE"),
+        ForeignKey(
+            "subscriptions.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     plan_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("plans.id", ondelete="CASCADE"),
+        ForeignKey(
+            "meal_plans.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
 
     meal_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("meals.id", ondelete="CASCADE"),
+        ForeignKey(
+            "meals.id",
+            ondelete="CASCADE",
+        ),
         nullable=False,
         index=True,
     )
@@ -62,8 +70,8 @@ class MealSelection(Base):
 
     is_skipped: Mapped[bool] = mapped_column(
         Boolean,
-        nullable=False,
         default=False,
+        nullable=False,
     )
 
     skip_reason: Mapped[str | None] = mapped_column(
@@ -73,15 +81,15 @@ class MealSelection(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        nullable=False,
         default=datetime.utcnow,
+        nullable=False,
     )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        nullable=False,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
+        nullable=False,
     )
 
     __table_args__ = (

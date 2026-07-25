@@ -295,14 +295,15 @@ def assign_meals_to_customer_subscription(
         db.rollback()
 
         logger.exception(
-        "Failed to assign meals to subscription %s: %s",
-        subscription_id,
-        exc,
+            "Failed to assign meals to subscription %s",
+            subscription_id,
     )
 
+        original_error = getattr(exc, "orig", exc)
+
         raise HTTPException(
-        status_code=500,
-        detail=f"Failed to save meal assignments: {str(exc.orig or exc)}",
+            status_code=500,
+            detail=f"Failed to save meal assignments: {str(original_error)}",
     ) from exc
 
     serialized_selections = [
