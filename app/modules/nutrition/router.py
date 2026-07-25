@@ -14,7 +14,8 @@ from app.modules.meal_selections.schemas import (
 from app.modules.meals.models import Meal
 from app.modules.subscriptions.models import Subscription
 from app.modules.users.models import User, UserRole
-
+import logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/nutrition",
@@ -293,10 +294,16 @@ def assign_meals_to_customer_subscription(
     except SQLAlchemyError as exc:
         db.rollback()
 
+        logger.exception(
+        "Failed to assign meals to subscription %s: %s",
+        subscription_id,
+        exc,
+    )
+
         raise HTTPException(
-            status_code=500,
-            detail="Failed to save meal assignments",
-        ) from exc
+        status_code=500,
+        detail=f"Failed to save meal assignments: {str(exc.orig or exc)}",
+    ) from exc
 
     serialized_selections = [
         MealSelectionResponse.model_validate(

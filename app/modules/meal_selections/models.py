@@ -12,12 +12,8 @@ class MealSelection(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    subscription_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     plan_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     meal_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-
-    day_number: Mapped[int] = mapped_column(Integer, nullable=False)
-    meal_time: Mapped[str] = mapped_column(String(50), nullable=False)
 
     is_skipped: Mapped[bool] = mapped_column(Boolean, default=False)
     skip_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
