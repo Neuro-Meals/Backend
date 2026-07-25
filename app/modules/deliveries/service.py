@@ -1215,7 +1215,7 @@ def build_delivery_query(
             Order.delivery_date == scheduled_date
         )
 
-    return query.distinct()
+    return query
 
 def list_deliveries(
     db: Session,
