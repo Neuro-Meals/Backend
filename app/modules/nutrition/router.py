@@ -15,6 +15,20 @@ from app.modules.meals.models import Meal
 from app.modules.subscriptions.models import Subscription
 from app.modules.users.models import User, UserRole
 import logging
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.modules.meal_selections.models import MealSelection
+from app.modules.meal_selections.schemas import (
+    DayMealAssignmentRequest,
+    DayMealAssignmentResponse,
+)
+from app.modules.meals.models import Meal
+from app.modules.subscriptions.models import (
+    Subscription,
+    SubscriptionStatus,
+)
+from app.modules.users.models import User, UserRole
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -22,6 +36,51 @@ router = APIRouter(
     tags=["Nutritionist"],
 )
 
+MEAL_TIMES = (
+    "breakfast",
+    "lunch",
+    "dinner",
+    "snack",
+)
+
+
+def serialize_assigned_meal(
+    selection: MealSelection,
+    meal: Meal,
+) -> dict:
+    return {
+        "selection_id": selection.id,
+        "subscription_id": selection.subscription_id,
+        "plan_id": selection.plan_id,
+        "day_number": selection.day_number,
+        "meal_time": selection.meal_time,
+        "is_skipped": selection.is_skipped,
+        "skip_reason": selection.skip_reason,
+        "meal": {
+            "id": meal.id,
+            "category_id": meal.category_id,
+            "name_en": meal.name_en,
+            "name_ar": meal.name_ar,
+            "description_en": getattr(
+                meal,
+                "description_en",
+                None,
+            ),
+            "description_ar": getattr(
+                meal,
+                "description_ar",
+                None,
+            ),
+            "calories": meal.calories,
+            "protein_g": meal.protein_g,
+            "carbs_g": meal.carbs_g,
+            "fat_g": meal.fat_g,
+            "fiber_g": getattr(meal, "fiber_g", None),
+            "image_url": meal.image_url,
+            "is_available": meal.is_available,
+        },
+    }
+    
 
 NUTRITION_ROLES = (
     UserRole.ADMIN,
@@ -438,6 +497,160 @@ def update_customer_meal_selection(
 
     return selection
 
+@router.get(
+    "/subscriptions/{subscription_id}/assigned-meals",
+)
+def get_subscription_assigned_meals(
+    subscription_id: int,
+    day_number: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+            UserRole.NUTRITION_MANAGER,
+        )
+    ),
+):
+    subscription = (
+        db.query(Subscription)
+        .filter(Subscription.id == subscription_id)
+        .first()
+    )
+
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found",
+        )
+
+    query = (
+        db.query(MealSelection, Meal)
+        .join(
+            Meal,
+            Meal.id == MealSelection.meal_id,
+        )
+        .filter(
+            MealSelection.subscription_id == subscription_id,
+        )
+    )
+
+    if day_number is not None:
+        query = query.filter(
+            MealSelection.day_number == day_number,
+        )
+
+    results = (
+        query.order_by(
+            MealSelection.day_number.asc(),
+            MealSelection.meal_time.asc(),
+            MealSelection.id.asc(),
+        )
+        .all()
+    )
+
+    grouped: dict[str, list[dict]] = {
+        meal_time: []
+        for meal_time in MEAL_TIMES
+    }
+
+    for selection, meal in results:
+        grouped.setdefault(
+            selection.meal_time,
+            [],
+        ).append(
+            serialize_assigned_meal(
+                selection,
+                meal,
+            )
+        )
+
+    return {
+        "success": True,
+        "subscription_id": subscription.id,
+        "user_id": subscription.user_id,
+        "plan_id": subscription.plan_id,
+        "day_number": day_number,
+        "assigned_meals": grouped,
+    }
+
+@router.get(
+    "/subscriptions/{subscription_id}/assigned-meals",
+)
+def get_subscription_assigned_meals(
+    subscription_id: int,
+    day_number: int | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(
+        require_roles(
+            UserRole.ADMIN,
+            UserRole.SUPER_ADMIN,
+            UserRole.NUTRITION_MANAGER,
+        )
+    ),
+):
+    subscription = (
+        db.query(Subscription)
+        .filter(Subscription.id == subscription_id)
+        .first()
+    )
+
+    if not subscription:
+        raise HTTPException(
+            status_code=404,
+            detail="Subscription not found",
+        )
+
+    query = (
+        db.query(MealSelection, Meal)
+        .join(
+            Meal,
+            Meal.id == MealSelection.meal_id,
+        )
+        .filter(
+            MealSelection.subscription_id == subscription_id,
+        )
+    )
+
+    if day_number is not None:
+        query = query.filter(
+            MealSelection.day_number == day_number,
+        )
+
+    results = (
+        query.order_by(
+            MealSelection.day_number.asc(),
+            MealSelection.meal_time.asc(),
+            MealSelection.id.asc(),
+        )
+        .all()
+    )
+
+    grouped: dict[str, list[dict]] = {
+        meal_time: []
+        for meal_time in MEAL_TIMES
+    }
+
+    for selection, meal in results:
+        grouped.setdefault(
+            selection.meal_time,
+            [],
+        ).append(
+            serialize_assigned_meal(
+                selection,
+                meal,
+            )
+        )
+
+    return {
+        "success": True,
+        "subscription_id": subscription.id,
+        "user_id": subscription.user_id,
+        "plan_id": subscription.plan_id,
+        "day_number": day_number,
+        "assigned_meals": grouped,
+    }
+    
 
 @router.delete("/meal-selections/{selection_id}")
 def delete_customer_meal_selection(

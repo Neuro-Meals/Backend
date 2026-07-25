@@ -2,7 +2,80 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List
 from pydantic import BaseModel, Field, field_validator
+from typing import Dict, List, Literal
+from pydantic import BaseModel, Field, field_validator
 
+MealTime = Literal[
+    "breakfast",
+    "lunch",
+    "dinner",
+    "snack",
+]
+
+
+class DayMealCategories(BaseModel):
+    breakfast: List[int] = Field(default_factory=list)
+    lunch: List[int] = Field(default_factory=list)
+    dinner: List[int] = Field(default_factory=list)
+    snack: List[int] = Field(default_factory=list)
+
+    @field_validator(
+        "breakfast",
+        "lunch",
+        "dinner",
+        "snack",
+    )
+    @classmethod
+    def remove_duplicate_meal_ids(
+        cls,
+        meal_ids: List[int],
+    ) -> List[int]:
+        # Keep the original order while removing duplicates.
+        return list(dict.fromkeys(meal_ids))
+
+
+class DayMealAssignmentRequest(BaseModel):
+    subscription_id: int
+    day_number: int = Field(ge=1)
+    categories: DayMealCategories
+
+
+class AssignedMealDetails(BaseModel):
+    id: int
+    category_id: int | None = None
+    name_en: str | None = None
+    name_ar: str | None = None
+    description_en: str | None = None
+    description_ar: str | None = None
+    calories: float | None = None
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
+    fiber_g: float | None = None
+    image_url: str | None = None
+    is_available: bool | None = None
+
+
+class AssignedMealItem(BaseModel):
+    selection_id: int
+    subscription_id: int
+    plan_id: int
+    day_number: int
+    meal_time: str
+    is_skipped: bool
+    skip_reason: str | None = None
+    meal: AssignedMealDetails
+
+
+class DayMealAssignmentResponse(BaseModel):
+    success: bool
+    message: str
+    subscription_id: int
+    day_number: int
+    created_count: int
+    deleted_count: int
+    assigned_meals: Dict[str, List[AssignedMealItem]]
+    
 class MealSelectionCreate(BaseModel):
     subscription_id: int
     meal_id: int
