@@ -9,21 +9,21 @@ from app.db.database import Base
 class MealSelection(Base):
     __tablename__ = "meal_selections"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id = ...
 
-    user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    plan_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    meal_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_id = ...
+    subscription_id = ...
+    plan_id = ...
+    meal_id = ...
 
-    is_skipped: Mapped[bool] = mapped_column(Boolean, default=False)
-    skip_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    day_number = ...
+    meal_time = ...
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
-    )
+    is_skipped = ...
+    skip_reason = ...
+
+    created_at = ...
+    updated_at = ...
 
     __table_args__ = (
         UniqueConstraint(
@@ -31,6 +31,7 @@ class MealSelection(Base):
             "subscription_id",
             "day_number",
             "meal_time",
+            "meal_id",
             name="unique_user_subscription_day_meal_time",
         ),
     )
