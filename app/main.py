@@ -30,6 +30,7 @@ from app.modules.chatbot.router import router as chatbot_router
 from app.modules.chef.router import router as chef_router
 from app.common.handlers import register_exception_handlers
 from app.modules.customer_drivers.router import router as customer_driver_router
+
 from app.modules.chef.admin_router import (
     router as chef_admin_router,
 )
