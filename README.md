@@ -279,3 +279,13 @@ echo "New database: $DB_NAME"
 echo "Legacy database: $LEGACY_DB_NAME"
 echo "Database owner: $DB_OWNER"
 echo "Reset timestamp: $RESET_DATE"
+
+
+pm2 delete xerin-frontend
+
+pm2 start npm --name xerin-frontend -- run dev -- -H 0.0.0.0 -p 8081
+
+pm2 restart xerin-frontend
+
+sudo systemctl daemon-reload
+sudo systemctl restart xerin-backend

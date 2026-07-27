@@ -98,7 +98,6 @@ def build_logged_in_user(
         ),
     )
 
-
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
     try:
@@ -115,7 +114,6 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         return user
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 @router.post("/verify-email")
 def verify_email(

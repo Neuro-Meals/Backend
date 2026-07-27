@@ -1,8 +1,6 @@
 from fastapi import FastAPI
-
 from app.core.config import settings
 from app.db.database import Base, engine
-
 from app.modules.auth.router import router as auth_router
 from app.modules.users.router import router as users_router
 from app.modules.users.rbac_router import router as rbac_router
@@ -30,6 +28,7 @@ from app.modules.chatbot.router import router as chatbot_router
 from app.modules.chef.router import router as chef_router
 from app.common.handlers import register_exception_handlers
 from app.modules.customer_drivers.router import router as customer_driver_router
+
 
 from app.modules.chef.admin_router import (
     router as chef_admin_router,
