@@ -571,6 +571,29 @@ def _load_related_records(
     dict[int, Delivery],
     dict[int, User],
 ]:
+    """
+    Load all related records required to serialize a list of orders.
+
+    Returns:
+        customer_map:
+            user_id -> customer User
+
+        subscription_map:
+            subscription_id -> Subscription
+
+        plan_map:
+            plan_id -> MealPlan
+
+        payment_map:
+            subscription_id -> latest Payment
+
+        delivery_map:
+            order_id -> latest Delivery tracking record
+
+        driver_map:
+            driver_id -> driver User
+    """
+
     user_ids = {
         order.user_id
         for order in orders
@@ -592,6 +615,14 @@ def _load_related_records(
     order_ids = {
         order.id
         for order in orders
+        if order.id is not None
+    }
+
+    # Driver assignment belongs to Order, not Delivery.
+    driver_ids = {
+        order.driver_id
+        for order in orders
+        if getattr(order, "driver_id", None) is not None
     }
 
     customer_map: dict[int, User] = {}
@@ -601,6 +632,9 @@ def _load_related_records(
     delivery_map: dict[int, Delivery] = {}
     driver_map: dict[int, User] = {}
 
+    # ---------------------------------------------------------
+    # Customers
+    # ---------------------------------------------------------
     if user_ids:
         customers = (
             db.query(User)
@@ -613,13 +647,14 @@ def _load_related_records(
             for customer in customers
         }
 
+    # ---------------------------------------------------------
+    # Subscriptions and latest payments
+    # ---------------------------------------------------------
     if subscription_ids:
         subscriptions = (
             db.query(Subscription)
             .filter(
-                Subscription.id.in_(
-                    subscription_ids
-                )
+                Subscription.id.in_(subscription_ids)
             )
             .all()
         )
@@ -636,10 +671,15 @@ def _load_related_records(
                     subscription_ids
                 )
             )
-            .order_by(Payment.id.desc())
+            .order_by(
+                Payment.subscription_id.asc(),
+                Payment.id.desc(),
+            )
             .all()
         )
 
+        # Because payments are ordered newest first per subscription,
+        # keep only the first payment found for each subscription.
         for payment in payments:
             subscription_id = getattr(
                 payment,
@@ -647,19 +687,21 @@ def _load_related_records(
                 None,
             )
 
-            if (
-                subscription_id is not None
-                and subscription_id
-                not in payment_map
-            ):
-                payment_map[
-                    subscription_id
-                ] = payment
+            if subscription_id is None:
+                continue
 
+            if subscription_id not in payment_map:
+                payment_map[subscription_id] = payment
+
+    # ---------------------------------------------------------
+    # Meal plans
+    # ---------------------------------------------------------
     if plan_ids:
         plans = (
             db.query(MealPlan)
-            .filter(MealPlan.id.in_(plan_ids))
+            .filter(
+                MealPlan.id.in_(plan_ids)
+            )
             .all()
         )
 
@@ -668,32 +710,45 @@ def _load_related_records(
             for plan in plans
         }
 
+    # ---------------------------------------------------------
+    # Delivery tracking records
+    # ---------------------------------------------------------
     if order_ids:
         deliveries = (
             db.query(Delivery)
             .filter(
                 Delivery.order_id.in_(order_ids)
             )
-            .order_by(Delivery.id.desc())
+            .order_by(
+                Delivery.order_id.asc(),
+                Delivery.id.desc(),
+            )
             .all()
         )
 
+        # Keep the latest delivery record for every order.
         for delivery in deliveries:
-            if delivery.order_id not in delivery_map:
-                delivery_map[
-                    delivery.order_id
-                ] = delivery
+            order_id = getattr(
+                delivery,
+                "order_id",
+                None,
+            )
 
-    driver_ids = {
-        delivery.driver_id
-        for delivery in delivery_map.values()
-        if delivery.driver_id is not None
-    }
+            if order_id is None:
+                continue
 
+            if order_id not in delivery_map:
+                delivery_map[order_id] = delivery
+
+    # ---------------------------------------------------------
+    # Drivers
+    # ---------------------------------------------------------
     if driver_ids:
         drivers = (
             db.query(User)
-            .filter(User.id.in_(driver_ids))
+            .filter(
+                User.id.in_(driver_ids)
+            )
             .all()
         )
 
@@ -743,10 +798,10 @@ def _serialize_order_list(
 
         if (
             delivery is not None
-            and delivery.driver_id is not None
+            and delivery.order.driver_id is not None
         ):
             driver = driver_map.get(
-                delivery.driver_id
+                delivery.order.driver_id
             )
 
         results.append(
