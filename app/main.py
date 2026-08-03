@@ -21,7 +21,8 @@ from app.modules.uploads.router import router as uploads_router
 from app.modules.driver.router import router as driver_router
 from app.modules.nutrition.router import router as nutrition_router
 from app.modules.coupons.router import router as coupons_router
-from app.modules.reviews.router import router as reviews_router
+from app.modules.health_profile_options.router import router as health_profile_options
+from app.modules.reviews.router import router as reviews_router 
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.locations.router import router as locations_router
 from app.modules.chatbot.router import router as chatbot_router
@@ -98,6 +99,7 @@ app.include_router(chef_admin_router)
 app.include_router(order_automation_router)
 app.include_router(meal_assignments_router)
 app.include_router(customer_driver_router)
+app.include_router(health_profile_options)
 Base.metadata.create_all(bind=engine)
 
 
