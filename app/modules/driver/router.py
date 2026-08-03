@@ -118,19 +118,33 @@ def get_driver_delivery_or_404(
     delivery_id: int,
     driver_id: int,
 ) -> Delivery:
+    """
+    Return one delivery assigned to the authenticated driver.
+
+    Driver assignment belongs to Order.driver_id.
+    Delivery only stores tracking information.
+    """
+
     delivery = (
         db.query(Delivery)
+        .join(
+            Order,
+            Order.id == Delivery.order_id,
+        )
         .filter(
             Delivery.id == delivery_id,
-            Delivery.driver_id == driver_id,
+            Order.driver_id == driver_id,
         )
         .first()
     )
 
-    if not delivery:
+    if delivery is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Delivery not found or not assigned to this driver",
+            detail=(
+                "Delivery was not found or is not "
+                "assigned to this driver."
+            ),
         )
 
     return delivery
