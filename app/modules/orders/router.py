@@ -482,10 +482,20 @@ def _build_order_response(
     return {
         "id": order.id,
         "order_number": order.order_number,
+
+        # Direct order relationship fields required by management UIs.
+        "user_id": order.user_id,
+        "subscription_id": order.subscription_id,
+        "plan_id": order.plan_id,
+        "meal_assignment_id": order.meal_assignment_id,
+        "meal_category_id": order.meal_category_id,
+        "driver_id": order.driver_id,
+
         "source": _enum_value(order.source),
         "status": _enum_value(order.status),
         "total_amount": order.total_amount,
         "delivery_date": order.delivery_date,
+        "delivery_time": order.delivery_time,
         "delivery_preference_id": (
             order.delivery_preference_id
         ),
@@ -794,15 +804,13 @@ def _serialize_order_list(
 
         delivery = delivery_map.get(order.id)
 
-        driver = None
-
-        if (
-            delivery is not None
-            and delivery.order.driver_id is not None
-        ):
-            driver = driver_map.get(
-                delivery.order.driver_id
-            )
+        # driver_id belongs directly to Order. A Delivery record may not
+        # exist yet for newly generated or confirmed orders.
+        driver = (
+            driver_map.get(order.driver_id)
+            if order.driver_id is not None
+            else None
+        )
 
         results.append(
             _build_order_response(
