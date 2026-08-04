@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, time
+from decimal import Decimal
 from math import ceil
-from typing import Any
+from typing import Any, Literal
 from datetime import date, timedelta
 
 from app.modules.meal_assignments.schemas import (
@@ -47,6 +48,17 @@ router = APIRouter(
 )
 
 class MealAssignmentItemCreate(BaseModel):
+    """
+    One meal selected for a customer.
+
+    quantity:
+        Number of packages/portions.
+
+    preparation_quantity + preparation_unit:
+        Actual amount assigned to the customer, such as
+        10 kg, 500 g, 0.5 whole, or 2 portions.
+    """
+
     meal_id: int = Field(
         ...,
         gt=0,
@@ -58,6 +70,27 @@ class MealAssignmentItemCreate(BaseModel):
         ge=1,
         le=20,
     )
+
+    preparation_quantity: Decimal = Field(
+        default=Decimal("1"),
+        gt=0,
+        max_digits=10,
+        decimal_places=3,
+    )
+
+    preparation_unit: Literal[
+        "kg",
+        "g",
+        "litre",
+        "ml",
+        "whole",
+        "half",
+        "quarter",
+        "piece",
+        "portion",
+        "tray",
+        "pack",
+    ] = "portion"
 
     notes: str | None = Field(
         default=None,
