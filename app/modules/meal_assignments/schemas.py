@@ -1,9 +1,25 @@
 from datetime import date, datetime, time
+from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
-from typing import Any
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pydantic import BaseModel, ConfigDict, Field
+
+PreparationUnit = Literal[
+    "kg",
+    "g",
+    "litre",
+    "ml",
+    "whole",
+    "half",
+    "quarter",
+    "piece",
+    "portion",
+    "tray",
+    "pack",
+]
+
+
 class MealAssignmentItemCreate(BaseModel):
     meal_id: int = Field(
         ...,
@@ -20,6 +36,26 @@ class MealAssignmentItemCreate(BaseModel):
         default=None,
         max_length=500,
     )
+    preparation_quantity: Decimal = Field(
+        default=Decimal("1"),
+        gt=0,
+        max_digits=10,
+        decimal_places=3,
+    )
+
+    preparation_unit: Literal[
+    "kg",
+    "g",
+    "litre",
+    "ml",
+    "whole",
+    "half",
+    "quarter",
+    "piece",
+    "portion",
+    "tray",
+    "pack",
+] = "portion"
 
 
 class MealCategoryAssignmentCreate(BaseModel):
@@ -116,6 +152,26 @@ class MealAssignmentItemUpdate(BaseModel):
         default=None,
         max_length=500,
     )
+    preparation_quantity: Decimal = Field(
+        default=Decimal("1"),
+        gt=0,
+        max_digits=10,
+        decimal_places=3,
+    )
+
+    preparation_unit: Literal[
+    "kg",
+    "g",
+    "litre",
+    "ml",
+    "whole",
+    "half",
+    "quarter",
+    "piece",
+    "portion",
+    "tray",
+    "pack",
+] = "portion"
 
 
 class MealAssignmentUpdate(BaseModel):
@@ -183,9 +239,7 @@ class MealCategorySummary(BaseModel):
     name_ar: str | None = None
     image_url: str | None = None
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MealSummary(BaseModel):
@@ -222,9 +276,7 @@ class MealSummary(BaseModel):
         default_factory=list,
     )
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MealAssignmentItemResponse(BaseModel):
@@ -233,6 +285,8 @@ class MealAssignmentItemResponse(BaseModel):
     meal_id: int
 
     quantity: int
+    preparation_quantity: Decimal
+    preparation_unit: str
     notes: str | None = None
 
     created_at: datetime
@@ -240,9 +294,7 @@ class MealAssignmentItemResponse(BaseModel):
 
     meal: MealSummary | None = None
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AssignedBySummary(BaseModel):
@@ -251,9 +303,7 @@ class AssignedBySummary(BaseModel):
     last_name: str
     role: str
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DriverSummary(BaseModel):
@@ -265,9 +315,7 @@ class DriverSummary(BaseModel):
     role: str
     is_active: bool
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CustomerSummary(BaseModel):
@@ -284,9 +332,7 @@ class CustomerSummary(BaseModel):
     dietary_preference: str | None = None
     fitness_goal: str | None = None
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SubscriptionSummary(BaseModel):
@@ -297,9 +343,7 @@ class SubscriptionSummary(BaseModel):
     start_date: datetime | None = None
     end_date: datetime | None = None
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DeliveryPreferenceSummary(BaseModel):
@@ -322,9 +366,7 @@ class DeliveryPreferenceSummary(BaseModel):
 
     is_active: bool
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MealAssignmentResponse(BaseModel):
@@ -363,9 +405,7 @@ class MealAssignmentResponse(BaseModel):
         DeliveryPreferenceSummary | None
     ) = None
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MealAssignmentDateGroup(BaseModel):
@@ -448,6 +488,8 @@ class CustomerMealSummary(BaseModel):
     sodium_mg: float | None = None
 
     quantity: int = 1
+    preparation_quantity: Decimal = Decimal("1")
+    preparation_unit: str = "portion"
     item_notes: str | None = None
     ingredients: list[str] = Field(default_factory=list)
     allergens: list[str] = Field(default_factory=list)

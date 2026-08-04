@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -9,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Time,
     UniqueConstraint,
@@ -218,10 +220,14 @@ class MealAssignment(Base):
 
 class MealAssignmentItem(Base):
     """
-    Stores the individual foods selected under a category.
+    Stores one selected meal under a meal-category assignment.
 
-    One breakfast assignment may contain several items:
-    Banana, Eggs and Oatmeal.
+    quantity:
+        Number of portions/packages.
+
+    preparation_quantity + preparation_unit:
+        Actual amount assigned to this customer, such as
+        2 kg, 500 g, 0.5 whole, or 1 portion.
     """
 
     __tablename__ = "meal_assignment_items"
@@ -241,19 +247,13 @@ class MealAssignmentItem(Base):
     )
 
     meal_assignment_id: Mapped[int] = mapped_column(
-        ForeignKey(
-            "meal_assignments.id",
-            ondelete="CASCADE",
-        ),
+        ForeignKey("meal_assignments.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
     meal_id: Mapped[int] = mapped_column(
-        ForeignKey(
-            "meals.id",
-            ondelete="RESTRICT",
-        ),
+        ForeignKey("meals.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
@@ -262,6 +262,20 @@ class MealAssignmentItem(Base):
         Integer,
         default=1,
         server_default="1",
+        nullable=False,
+    )
+
+    preparation_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(10, 3),
+        default=Decimal("1"),
+        server_default="1",
+        nullable=False,
+    )
+
+    preparation_unit: Mapped[str] = mapped_column(
+        String(30),
+        default="portion",
+        server_default="portion",
         nullable=False,
     )
 
@@ -299,6 +313,8 @@ class MealAssignmentItem(Base):
             f"id={self.id}, "
             f"meal_assignment_id={self.meal_assignment_id}, "
             f"meal_id={self.meal_id}, "
-            f"quantity={self.quantity}"
+            f"quantity={self.quantity}, "
+            f"preparation_quantity={self.preparation_quantity}, "
+            f"preparation_unit={self.preparation_unit}"
             ")>"
         )

@@ -1,4 +1,7 @@
-from datetime import date
+from collections import defaultdict
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+import re
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -21,20 +24,27 @@ from app.modules.users.models import (
     UserRole,
 )
 
-from collections import defaultdict
-from datetime import date, datetime
-import re
-
 from app.modules.deliveries.models import Delivery
 from app.modules.orders.models import Order
-from app.modules.subscriptions.models import Subscription
-
-
 STANDARD_CATEGORY_KEYS = {
     "breakfast",
     "lunch",
     "dinner",
     "snack",
+}
+
+ALLOWED_PREPARATION_UNITS = {
+    "kg",
+    "g",
+    "litre",
+    "ml",
+    "whole",
+    "half",
+    "quarter",
+    "piece",
+    "portion",
+    "tray",
+    "pack",
 }
 
 
@@ -94,6 +104,8 @@ def _meal_summary(item: MealAssignmentItem) -> dict[str, Any]:
             "id": item.meal_id,
             "name_en": "Unavailable meal",
             "quantity": item.quantity,
+            "preparation_quantity": item.preparation_quantity,
+            "preparation_unit": item.preparation_unit,
             "item_notes": item.notes,
         }
 
@@ -125,6 +137,8 @@ def _meal_summary(item: MealAssignmentItem) -> dict[str, Any]:
         "sugar_g": getattr(meal, "sugar_g", None),
         "sodium_mg": getattr(meal, "sodium_mg", None),
         "quantity": item.quantity,
+        "preparation_quantity": item.preparation_quantity,
+        "preparation_unit": item.preparation_unit,
         "item_notes": item.notes,
         "ingredients": getattr(meal, "ingredients", None) or [],
         "allergens": getattr(meal, "allergens", None) or [],
@@ -853,8 +867,12 @@ def validate_assignment_meals(
     """
     Validate every meal included in one category assignment.
 
-    Returns the validated meal objects together with their
-    submitted item data.
+    quantity:
+        Number of portions/packages.
+
+    preparation_quantity and preparation_unit:
+        Actual amount assigned to the customer, such as
+        2 kg, 500 g, 0.5 whole, or 1 portion.
     """
 
     if not meal_items:
@@ -878,6 +896,8 @@ def validate_assignment_meals(
                 detail="Every meal item must contain meal_id",
             )
 
+        meal_id = int(meal_id)
+
         if meal_id in submitted_meal_ids:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -898,15 +918,70 @@ def validate_assignment_meals(
             category_id=meal_category_id,
         )
 
-        quantity = int(
-            item_data.get("quantity") or 1
-        )
+        quantity = int(item_data.get("quantity") or 1)
 
         if quantity < 1 or quantity > 20:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Meal quantity must be between 1 and 20",
+            )
+
+        raw_preparation_quantity = item_data.get(
+            "preparation_quantity",
+            1,
+        )
+
+        try:
+            preparation_quantity = Decimal(
+                str(raw_preparation_quantity)
+            )
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    "Meal quantity must be between 1 and 20"
+                    f"Meal {meal_id} has an invalid "
+                    "preparation_quantity"
+                ),
+            ) from exc
+
+        if preparation_quantity <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Preparation quantity must be greater than zero"
+                ),
+            )
+
+        if preparation_quantity.as_tuple().exponent < -3:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "Preparation quantity cannot contain more than "
+                    "3 decimal places"
+                ),
+            )
+
+        if preparation_quantity >= Decimal("10000000"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Preparation quantity is too large",
+            )
+
+        preparation_unit = str(
+            item_data.get("preparation_unit") or "portion"
+        ).strip().lower()
+
+        if preparation_unit not in ALLOWED_PREPARATION_UNITS:
+            allowed_units = ", ".join(
+                sorted(ALLOWED_PREPARATION_UNITS)
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Unsupported preparation unit "
+                    f"'{preparation_unit}'. Allowed units: "
+                    f"{allowed_units}"
                 ),
             )
 
@@ -916,6 +991,8 @@ def validate_assignment_meals(
                 {
                     "meal_id": meal_id,
                     "quantity": quantity,
+                    "preparation_quantity": preparation_quantity,
+                    "preparation_unit": preparation_unit,
                     "notes": clean_optional_text(
                         item_data.get("notes")
                     ),
@@ -957,6 +1034,10 @@ def replace_assignment_items(
             meal_assignment_id=assignment.id,
             meal_id=item_data["meal_id"],
             quantity=item_data["quantity"],
+            preparation_quantity=item_data[
+                "preparation_quantity"
+            ],
+            preparation_unit=item_data["preparation_unit"],
             notes=item_data["notes"],
         )
 
@@ -979,6 +1060,10 @@ def create_assignment_items(
             meal_assignment_id=assignment.id,
             meal_id=item_data["meal_id"],
             quantity=item_data["quantity"],
+            preparation_quantity=item_data[
+                "preparation_quantity"
+            ],
+            preparation_unit=item_data["preparation_unit"],
             notes=item_data["notes"],
         )
 
@@ -1515,6 +1600,12 @@ def build_assignment_response(
                 ),
                 "meal_id": assignment_item.meal_id,
                 "quantity": assignment_item.quantity,
+                "preparation_quantity": (
+                    assignment_item.preparation_quantity
+                ),
+                "preparation_unit": (
+                    assignment_item.preparation_unit
+                ),
                 "notes": assignment_item.notes,
                 "created_at": assignment_item.created_at,
                 "updated_at": assignment_item.updated_at,
