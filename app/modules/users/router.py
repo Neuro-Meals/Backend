@@ -11,7 +11,7 @@ from app.modules.auth.dependencies import (
     require_roles,
 )
 from app.modules.meals.models import MealCategory
-from app.modules.orders.models import Order
+from app.modules.orders.models import Order, OrderStatus
 from app.modules.plans.models import MealPlan
 from app.modules.subscriptions.models import (
     PaymentStatus,
@@ -45,6 +45,7 @@ class CustomerMealWorkflow(str, Enum):
     NOT_PAID = "not_paid"
     PAID_WITHOUT_MEALS = "paid_without_meals"
     PAID_WITH_MEALS = "paid_with_meals"
+    MEALS_SERVED = "meals_served"
 
 
 def enum_value(value):
@@ -747,6 +748,20 @@ def list_users(
             active_paid_meal_assignment_exists,
         )
 
+    elif workflow == CustomerMealWorkflow.MEALS_SERVED:
+        delivered_order_exists = (
+            db.query(Order.id)
+            .filter(
+                Order.user_id == User.id,
+                Order.status == OrderStatus.DELIVERED,
+            )
+            .exists()
+        )
+
+        query = query.filter(
+            delivered_order_exists
+        )
+
     total = query.count()
 
     users = (
@@ -766,6 +781,7 @@ def list_users(
     ]
 
     orders_counts = {}
+    delivered_orders_counts = {}
     total_spents = {}
     assignment_counts_by_subscription = {}
 
@@ -799,6 +815,28 @@ def list_users(
 
             total_spents[row.user_id] = float(
                 row.total_spent
+            )
+
+        delivered_statistics = (
+            db.query(
+                Order.user_id,
+                func.count(
+                    Order.id
+                ).label("delivered_orders_count"),
+            )
+            .filter(
+                Order.user_id.in_(user_ids),
+                Order.status == OrderStatus.DELIVERED,
+            )
+            .group_by(
+                Order.user_id
+            )
+            .all()
+        )
+
+        for row in delivered_statistics:
+            delivered_orders_counts[row.user_id] = int(
+                row.delivered_orders_count
             )
 
     subscriptions_information = {}
@@ -970,7 +1008,21 @@ def list_users(
             meal_assignments_count > 0
         )
 
-        if not has_active_paid_subscription:
+        delivered_orders_count = (
+            delivered_orders_counts.get(
+                user.id,
+                0,
+            )
+        )
+
+        if delivered_orders_count > 0:
+            customer_workflow = (
+                CustomerMealWorkflow.MEALS_SERVED.value
+            )
+            next_action = "view_delivery_history"
+            can_assign_meals = True
+
+        elif not has_active_paid_subscription:
             customer_workflow = (
                 CustomerMealWorkflow.NOT_PAID.value
             )
@@ -1031,6 +1083,18 @@ def list_users(
                         user.id,
                         0,
                     )
+                ),
+                "delivered_orders_count": (
+                    delivered_orders_counts.get(
+                        user.id,
+                        0,
+                    )
+                ),
+                "has_served_meals": (
+                    delivered_orders_counts.get(
+                        user.id,
+                        0,
+                    ) > 0
                 ),
                 "total_spent": (
                     total_spents.get(
