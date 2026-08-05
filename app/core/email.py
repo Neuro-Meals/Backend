@@ -213,3 +213,159 @@ NutrioMeals Team
     )
 
     _send_email_message(message)
+
+
+def send_driver_ready_group_email(
+    *,
+    to_email: str,
+    driver_name: str,
+    orders: list[dict],
+    login_url: str | None = None,
+) -> None:
+    """
+    Send one summary email to a driver for several ready pickup orders.
+
+    The email deliberately excludes customer names, phone numbers, addresses,
+    allergies, health information and meal details. Protected details remain
+    available only inside the authenticated Driver Portal.
+    """
+    safe_driver_name = (
+        str(driver_name or "").strip()
+        or "Driver"
+    )
+    safe_login_url = str(
+        login_url
+        or "https://nutriomeals.com/login"
+    ).strip()
+
+    normalized_orders: list[dict] = []
+
+    for item in orders or []:
+        order_number = str(
+            item.get("order_number") or ""
+        ).strip()
+
+        if not order_number:
+            continue
+
+        normalized_orders.append(
+            {
+                "order_number": order_number,
+                "delivery_date": str(
+                    item.get("delivery_date") or ""
+                ).strip(),
+                "delivery_time": str(
+                    item.get("delivery_time") or ""
+                ).strip(),
+            }
+        )
+
+    if not normalized_orders:
+        raise ValueError(
+            "At least one order is required for a grouped driver email"
+        )
+
+    count = len(normalized_orders)
+    subject = (
+        f"NutrioMeals: {count} "
+        f"{'delivery' if count == 1 else 'deliveries'} "
+        "ready for pickup"
+    )
+
+    plain_rows = "\n".join(
+        (
+            f"- {item['order_number']} | "
+            f"{item['delivery_date']} "
+            f"{item['delivery_time']}"
+        )
+        for item in normalized_orders
+    )
+
+    plain_text = f"""Hello {safe_driver_name},
+
+{count} {'delivery is' if count == 1 else 'deliveries are'} now ready for pickup.
+
+Orders:
+{plain_rows}
+
+Please sign in to the NutrioMeals Driver Portal to view customer,
+pickup and delivery details:
+
+{safe_login_url}
+
+For customer privacy, protected customer and delivery details are available
+only after you sign in.
+
+Thank you,
+NutrioMeals Team
+"""
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = settings.EMAIL_FROM
+    message["To"] = to_email
+    message.set_content(plain_text)
+
+    escaped_name = html.escape(safe_driver_name)
+    escaped_url = html.escape(
+        safe_login_url,
+        quote=True,
+    )
+
+    html_rows = "".join(
+        (
+            "<tr>"
+            f"<td style='padding:10px;border-bottom:1px solid #e5e7eb;'>"
+            f"<strong>{html.escape(item['order_number'])}</strong>"
+            "</td>"
+            f"<td style='padding:10px;border-bottom:1px solid #e5e7eb;'>"
+            f"{html.escape(item['delivery_date'])}"
+            "</td>"
+            f"<td style='padding:10px;border-bottom:1px solid #e5e7eb;'>"
+            f"{html.escape(item['delivery_time'])}"
+            "</td>"
+            "</tr>"
+        )
+        for item in normalized_orders
+    )
+
+    message.add_alternative(
+        f"""<!doctype html>
+<html>
+<body style="margin:0;background:#f5f7f2;font-family:Arial,sans-serif;color:#173327;">
+  <div style="max-width:680px;margin:0 auto;padding:28px 16px;">
+    <div style="background:linear-gradient(135deg,#173327,#6E7A25);padding:24px;border-radius:18px 18px 0 0;color:white;">
+      <h1 style="margin:0;font-size:22px;">{count} {'Delivery' if count == 1 else 'Deliveries'} Ready for Pickup</h1>
+      <p style="margin:8px 0 0;opacity:.8;">NutrioMeals Driver Summary</p>
+    </div>
+    <div style="background:white;padding:26px;border-radius:0 0 18px 18px;border:1px solid #e5e7eb;">
+      <p>Hello <strong>{escaped_name}</strong>,</p>
+      <p>{count} {'delivery is' if count == 1 else 'deliveries are'} now ready for pickup.</p>
+      <table style="width:100%;border-collapse:collapse;margin:18px 0;">
+        <thead>
+          <tr style="background:#f7f8f3;text-align:left;">
+            <th style="padding:10px;">Order</th>
+            <th style="padding:10px;">Date</th>
+            <th style="padding:10px;">Time</th>
+          </tr>
+        </thead>
+        <tbody>{html_rows}</tbody>
+      </table>
+      <p style="text-align:center;margin:24px 0;">
+        <a href="{escaped_url}" style="display:inline-block;background:#173327;color:white;text-decoration:none;padding:13px 22px;border-radius:10px;font-weight:bold;">
+          Open Driver Portal
+        </a>
+      </p>
+      <p style="font-size:13px;color:#6b7280;">
+        Customer names, phone numbers, addresses, allergies and meal details
+        are not included in this email. Sign in to view protected details.
+      </p>
+      <p>Thank you,<br><strong>NutrioMeals Team</strong></p>
+    </div>
+  </div>
+</body>
+</html>""",
+        subtype="html",
+    )
+
+    _send_email_message(message)

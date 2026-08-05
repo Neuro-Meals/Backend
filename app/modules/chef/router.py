@@ -9,7 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.email import send_driver_ready_email
+from app.core.email import (
+    send_driver_ready_email,
+    send_driver_ready_group_email,
+)
 from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.chef.schemas import (
@@ -148,6 +151,84 @@ def send_driver_ready_email_safely(
             "Driver-ready email failed for order %s "
             "and driver %s.",
             order.order_number,
+            driver.id,
+        )
+        return False
+
+
+def add_driver_ready_group_notification(
+    *,
+    db: Session,
+    driver: User,
+    orders: list[Order],
+) -> Notification:
+    count = len(orders)
+    order_numbers = ", ".join(
+        order.order_number
+        for order in orders[:8]
+    )
+
+    if count > 8:
+        order_numbers += f", and {count - 8} more"
+
+    notification = Notification(
+        user_id=driver.id,
+        title=(
+            f"{count} "
+            f"{'delivery' if count == 1 else 'deliveries'} "
+            "ready for pickup"
+        ),
+        message=(
+            f"Orders {order_numbers} are ready for pickup. "
+            "Open the Driver Portal to view customer and route details."
+        ),
+        notification_type=NotificationType.DELIVERY.value,
+        channel=NotificationChannel.IN_APP.value,
+        is_read=False,
+    )
+
+    db.add(notification)
+    return notification
+
+
+def send_driver_ready_group_email_safely(
+    *,
+    driver: User,
+    orders: list[Order],
+) -> bool:
+    if not str(driver.email or "").strip():
+        logger.warning(
+            "Grouped driver-ready email skipped: "
+            "driver %s has no email address.",
+            driver.id,
+        )
+        return False
+
+    try:
+        send_driver_ready_group_email(
+            to_email=driver.email,
+            driver_name=driver_full_name(driver),
+            orders=[
+                {
+                    "order_number": order.order_number,
+                    "delivery_date": order.delivery_date,
+                    "delivery_time": order.delivery_time,
+                }
+                for order in orders
+            ],
+        )
+
+        logger.info(
+            "Grouped driver-ready email sent to driver %s "
+            "for %s order(s).",
+            driver.id,
+            len(orders),
+        )
+        return True
+
+    except Exception:
+        logger.exception(
+            "Grouped driver-ready email failed for driver %s.",
             driver.id,
         )
         return False
@@ -839,7 +920,9 @@ def bulk_change_status(
     updated = []
     failures = []
     now = datetime.utcnow()
-    ready_email_jobs: list[tuple[Order, User]] = []
+
+    # driver_id -> {"driver": User, "orders": list[Order]}
+    ready_groups: dict[int, dict] = {}
 
     for order_id in unique_ids:
         order = (
@@ -869,6 +952,8 @@ def bulk_change_status(
             )
             continue
 
+        driver = None
+
         if new_status == OrderStatus.READY_FOR_DELIVERY:
             driver = (
                 db.query(User)
@@ -890,8 +975,6 @@ def bulk_change_status(
                     }
                 )
                 continue
-        else:
-            driver = None
 
         order.status = new_status
 
@@ -907,15 +990,14 @@ def bulk_change_status(
                 commit=False,
             )
 
-            add_driver_ready_in_app_notification(
-                db=db,
-                order=order,
-                driver=driver,
+            group = ready_groups.setdefault(
+                driver.id,
+                {
+                    "driver": driver,
+                    "orders": [],
+                },
             )
-
-            ready_email_jobs.append(
-                (order, driver)
-            )
+            group["orders"].append(order)
 
         updated.append(
             {
@@ -925,31 +1007,64 @@ def bulk_change_status(
             }
         )
 
+    # One in-app notification per driver, not one per order.
+    if new_status == OrderStatus.READY_FOR_DELIVERY:
+        for group in ready_groups.values():
+            add_driver_ready_group_notification(
+                db=db,
+                driver=group["driver"],
+                orders=group["orders"],
+            )
+
     try:
         db.commit()
     except Exception:
         db.rollback()
         raise
 
-    email_sent = 0
-    email_failed = 0
+    driver_emails_sent = 0
+    driver_emails_failed = 0
+    notified_drivers = []
 
-    for order, driver in ready_email_jobs:
-        if send_driver_ready_email_safely(
-            order=order,
-            driver=driver,
-        ):
-            email_sent += 1
-        else:
-            email_failed += 1
+    # One email per driver after the transaction commits.
+    if new_status == OrderStatus.READY_FOR_DELIVERY:
+        for group in ready_groups.values():
+            driver = group["driver"]
+            orders = group["orders"]
+
+            email_sent = send_driver_ready_group_email_safely(
+                driver=driver,
+                orders=orders,
+            )
+
+            if email_sent:
+                driver_emails_sent += 1
+            else:
+                driver_emails_failed += 1
+
+            notified_drivers.append(
+                {
+                    "driver_id": driver.id,
+                    "driver_name": driver_full_name(driver),
+                    "orders": len(orders),
+                    "email_sent": email_sent,
+                }
+            )
 
     return {
-        "message": "Bulk status update completed",
+        "message": (
+            "Bulk ready update completed with grouped "
+            "driver notifications"
+            if new_status == OrderStatus.READY_FOR_DELIVERY
+            else "Bulk status update completed"
+        ),
         "requested_orders": len(unique_ids),
         "updated_orders": len(updated),
         "failed_orders": len(failures),
-        "driver_emails_sent": email_sent,
-        "driver_emails_failed": email_failed,
+        "notified_drivers": len(ready_groups),
+        "driver_emails_sent": driver_emails_sent,
+        "driver_emails_failed": driver_emails_failed,
+        "driver_notification_groups": notified_drivers,
         "orders": updated,
         "failures": failures,
     }
