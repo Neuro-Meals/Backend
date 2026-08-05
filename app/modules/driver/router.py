@@ -449,14 +449,24 @@ def get_driver(
 
     total_deliveries = (
         db.query(Delivery)
-        .filter(Delivery.driver_id == driver.id)
+        .join(
+            Order,
+            Order.id == Delivery.order_id,
+        )
+        .filter(
+            Order.driver_id == driver.id,
+        )
         .count()
     )
 
     completed_deliveries = (
         db.query(Delivery)
+        .join(
+            Order,
+            Order.id == Delivery.order_id,
+        )
         .filter(
-            Delivery.driver_id == driver.id,
+            Order.driver_id == driver.id,
             Delivery.status == DeliveryStatus.DELIVERED,
         )
         .count()
@@ -464,8 +474,12 @@ def get_driver(
 
     failed_deliveries = (
         db.query(Delivery)
+        .join(
+            Order,
+            Order.id == Delivery.order_id,
+        )
         .filter(
-            Delivery.driver_id == driver.id,
+            Order.driver_id == driver.id,
             Delivery.status == DeliveryStatus.FAILED,
         )
         .count()
@@ -473,12 +487,16 @@ def get_driver(
 
     active_deliveries = (
         db.query(Delivery)
+        .join(
+            Order,
+            Order.id == Delivery.order_id,
+        )
         .filter(
-            Delivery.driver_id == driver.id,
+            Order.driver_id == driver.id,
             Delivery.status.in_(
                 [
                     DeliveryStatus.PENDING,
-                    DeliveryStatus.ASSIGNED,
+                    DeliveryStatus.READY_FOR_PICKUP,
                     DeliveryStatus.PICKED_UP,
                     DeliveryStatus.OUT_FOR_DELIVERY,
                 ]
