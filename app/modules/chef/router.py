@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 from app.modules.deliveries.service import ensure_delivery_for_order
@@ -8,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.email import send_driver_ready_email
 from app.db.database import get_db
 from app.modules.auth.dependencies import require_roles
 from app.modules.chef.schemas import (
@@ -19,8 +21,16 @@ from app.modules.chef.schemas import (
     ChefOrderResponse,
     ChefStatusResponse,
 )
+from app.modules.notifications.models import (
+    Notification,
+    NotificationChannel,
+    NotificationType,
+)
 from app.modules.orders.models import Order, OrderStatus
 from app.modules.users.models import User, UserRole
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -44,6 +54,103 @@ KITCHEN_ACTIVE_STATUSES = (
     OrderStatus.READY_FOR_DELIVERY,
 )
 
+
+def driver_full_name(driver: User | None) -> str:
+    if driver is None:
+        return "Driver"
+
+    name = (
+        f"{driver.first_name or ''} "
+        f"{driver.last_name or ''}"
+    ).strip()
+
+    return name or "Driver"
+
+
+def add_driver_ready_in_app_notification(
+    *,
+    db: Session,
+    order: Order,
+    driver: User,
+) -> Notification:
+    """
+    Create the notification visible inside the Driver dashboard.
+
+    This notification is committed in the same transaction as the order and
+    delivery status change, so the in-app state remains consistent.
+    """
+    notification = Notification(
+        user_id=driver.id,
+        title="New delivery ready for pickup",
+        message=(
+            f"Order {order.order_number} is ready for pickup. "
+            f"Delivery date: {order.delivery_date}; "
+            f"time: {order.delivery_time}. "
+            "Open the Driver Portal to view the protected delivery details."
+        ),
+        notification_type=(
+            NotificationType.DELIVERY.value
+        ),
+        channel=NotificationChannel.IN_APP.value,
+        is_read=False,
+    )
+
+    db.add(notification)
+    return notification
+
+
+def send_driver_ready_email_safely(
+    *,
+    order: Order,
+    driver: User | None,
+) -> bool:
+    """
+    Send the external driver email after the database transaction commits.
+
+    Email failures are logged and never reverse READY_FOR_DELIVERY or
+    READY_FOR_PICKUP.
+    """
+    if driver is None:
+        logger.warning(
+            "Driver-ready email skipped for order %s: "
+            "assigned driver was not found.",
+            order.order_number,
+        )
+        return False
+
+    if not str(driver.email or "").strip():
+        logger.warning(
+            "Driver-ready email skipped for order %s: "
+            "driver %s has no email address.",
+            order.order_number,
+            driver.id,
+        )
+        return False
+
+    try:
+        send_driver_ready_email(
+            to_email=driver.email,
+            driver_name=driver_full_name(driver),
+            order_number=order.order_number,
+            delivery_date=order.delivery_date,
+            delivery_time=order.delivery_time,
+        )
+        logger.info(
+            "Driver-ready email sent for order %s "
+            "to driver %s.",
+            order.order_number,
+            driver.id,
+        )
+        return True
+
+    except Exception:
+        logger.exception(
+            "Driver-ready email failed for order %s "
+            "and driver %s.",
+            order.order_number,
+            driver.id,
+        )
+        return False
 
 def enum_value(value):
     if value is None:
@@ -654,15 +761,40 @@ def chef_mark_ready(
             ),
         )
 
-    # Mark the order ready
+    driver = (
+        db.query(User)
+        .filter(
+            User.id == order.driver_id,
+            User.role == UserRole.DRIVER,
+        )
+        .first()
+    )
+
+    if driver is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The order cannot be marked ready because "
+                "its assigned driver is missing or invalid."
+            ),
+        )
+
+    # Mark the order ready for the driver.
     order.status = OrderStatus.READY_FOR_DELIVERY
     order.ready_at = datetime.utcnow()
 
-    # Create the delivery tracking record if it doesn't exist
+    # Create/update the delivery tracking record as READY_FOR_PICKUP.
     ensure_delivery_for_order(
         db=db,
         order=order,
         commit=False,
+    )
+
+    # Make the alert available inside the Driver dashboard immediately.
+    add_driver_ready_in_app_notification(
+        db=db,
+        order=order,
+        driver=driver,
     )
 
     try:
@@ -673,8 +805,25 @@ def chef_mark_ready(
         db.rollback()
         raise
 
+    # External email is intentionally sent after commit. An SMTP outage must
+    # not roll back the kitchen-to-driver handoff.
+    email_sent = send_driver_ready_email_safely(
+        order=order,
+        driver=driver,
+    )
+
     return {
-        "message": "Order is ready for delivery",
+        "message": (
+            "Order is ready for delivery. "
+            + (
+                "The assigned driver was notified by email."
+                if email_sent
+                else (
+                    "The in-app driver notification was created, "
+                    "but the email could not be sent."
+                )
+            )
+        ),
         "order": build_order_payload(order),
     }
 
@@ -690,10 +839,11 @@ def bulk_change_status(
     updated = []
     failures = []
     now = datetime.utcnow()
+    ready_email_jobs: list[tuple[Order, User]] = []
 
     for order_id in unique_ids:
         order = (
-            db.query(Order)
+            order_query(db)
             .filter(Order.id == order_id)
             .first()
         )
@@ -719,16 +869,53 @@ def bulk_change_status(
             )
             continue
 
+        if new_status == OrderStatus.READY_FOR_DELIVERY:
+            driver = (
+                db.query(User)
+                .filter(
+                    User.id == order.driver_id,
+                    User.role == UserRole.DRIVER,
+                )
+                .first()
+            )
+
+            if driver is None:
+                failures.append(
+                    {
+                        "order_id": order.id,
+                        "reason": (
+                            "Assigned driver is missing "
+                            "or invalid"
+                        ),
+                    }
+                )
+                continue
+        else:
+            driver = None
+
         order.status = new_status
 
         if new_status == OrderStatus.PREPARING:
             order.preparation_started_at = now
 
-        if (
-            new_status
-            == OrderStatus.READY_FOR_DELIVERY
-        ):
+        if new_status == OrderStatus.READY_FOR_DELIVERY:
             order.ready_at = now
+
+            ensure_delivery_for_order(
+                db=db,
+                order=order,
+                commit=False,
+            )
+
+            add_driver_ready_in_app_notification(
+                db=db,
+                order=order,
+                driver=driver,
+            )
+
+            ready_email_jobs.append(
+                (order, driver)
+            )
 
         updated.append(
             {
@@ -744,11 +931,25 @@ def bulk_change_status(
         db.rollback()
         raise
 
+    email_sent = 0
+    email_failed = 0
+
+    for order, driver in ready_email_jobs:
+        if send_driver_ready_email_safely(
+            order=order,
+            driver=driver,
+        ):
+            email_sent += 1
+        else:
+            email_failed += 1
+
     return {
         "message": "Bulk status update completed",
         "requested_orders": len(unique_ids),
         "updated_orders": len(updated),
         "failed_orders": len(failures),
+        "driver_emails_sent": email_sent,
+        "driver_emails_failed": email_failed,
         "orders": updated,
         "failures": failures,
     }
