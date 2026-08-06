@@ -758,7 +758,7 @@ def driver_dashboard(
         Delivery.status.in_(
             [
                 DeliveryStatus.PENDING,
-                DeliveryStatus.ASSIGNED,
+                DeliveryStatus.READY_FOR_PICKUP,
             ]
         )
     ).count()
@@ -806,7 +806,7 @@ def driver_dashboard(
             Delivery.status.in_(
                 [
                     DeliveryStatus.PENDING,
-                    DeliveryStatus.ASSIGNED,
+                    DeliveryStatus.READY_FOR_PICKUP,
                 ]
             )
         )
@@ -1058,14 +1058,13 @@ def pickup_delivery(
 
     if delivery.status not in {
         DeliveryStatus.PENDING,
-        DeliveryStatus.ASSIGNED,
         DeliveryStatus.READY_FOR_PICKUP,
     }:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "Only pending, assigned, or ready-for-pickup "
-                "deliveries can be picked up"
+                "Only pending or ready-for-pickup deliveries "
+                "can be picked up"
             ),
         )
 
@@ -1210,7 +1209,7 @@ def fail_delivery(
     ensure_delivery_not_finished(delivery)
 
     if delivery.status not in {
-        DeliveryStatus.ASSIGNED,
+        DeliveryStatus.READY_FOR_PICKUP,
         DeliveryStatus.PICKED_UP,
         DeliveryStatus.OUT_FOR_DELIVERY,
     }:
