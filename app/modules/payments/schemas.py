@@ -12,6 +12,7 @@ from app.modules.payments.models import (
 
 class CreateCheckoutRequest(BaseModel):
     subscription_id: int
+    coupon_code: str | None = Field(None, max_length=50)
 
 
 class CreatePlanChangeCheckoutRequest(BaseModel):

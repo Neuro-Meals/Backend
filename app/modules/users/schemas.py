@@ -18,6 +18,9 @@ class UserCreate(BaseModel):
 
     password: str = Field(..., min_length=6)
 
+    # Optional referral code supplied during registration.
+    referral_code: str | None = Field(None, max_length=30)
+
     location: str | None = None
     address: str | None = None
 

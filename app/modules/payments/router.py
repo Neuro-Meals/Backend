@@ -34,6 +34,17 @@ from app.modules.subscriptions.models import (
     SubscriptionStatus,
 )
 from app.modules.users.models import User, UserRole
+from app.modules.coupons.models import CouponApplicationStatus, PaymentCouponApplication
+from app.modules.coupons.service import (
+    get_valid_coupon,
+    redeem_payment_coupon,
+    release_payment_coupon_application,
+    set_payment_coupon_application,
+)
+from app.modules.referrals.service import (
+    mark_referral_reward_used_for_coupon,
+    qualify_referral_after_payment,
+)
 
 
 router = APIRouter(prefix="/payments", tags=["Payments"])
@@ -375,6 +386,9 @@ def process_moyasar_payment(
     )
 
     if remote_status in {"paid", "captured"}:
+        was_already_paid = (
+            payment.status == PaymentRecordStatus.PAID.value
+        )
         payment.status = PaymentRecordStatus.PAID.value
 
         if payment.paid_at is None:
@@ -406,11 +420,24 @@ def process_moyasar_payment(
                 subscription=subscription,
             )
 
+            # These hooks are idempotent. They run only for a successful
+            # subscription payment, never for a plan-change payment.
+            if not was_already_paid:
+                redemption = redeem_payment_coupon(db, payment)
+                if redemption is not None:
+                    mark_referral_reward_used_for_coupon(
+                        db,
+                        redemption.coupon_id,
+                    )
+                qualify_referral_after_payment(db, payment)
+
     elif remote_status == "failed":
         payment.status = PaymentRecordStatus.FAILED.value
+        release_payment_coupon_application(db, payment.id)
 
     elif remote_status in {"voided", "cancelled", "canceled"}:
         payment.status = PaymentRecordStatus.CANCELLED.value
+        release_payment_coupon_application(db, payment.id)
 
     elif remote_status == "refunded":
         # This assumes REFUNDED exists in PaymentRecordStatus.
@@ -466,17 +493,22 @@ def create_checkout(
         )
         .first()
     )
-
     if not subscription:
-        raise HTTPException(
-            status_code=404,
-            detail="Subscription not found",
-        )
-
+        raise HTTPException(status_code=404, detail="Subscription not found")
     if subscription.payment_status == PaymentStatus.PAID:
-        raise HTTPException(
-            status_code=400,
-            detail="Subscription is already paid",
+        raise HTTPException(status_code=400, detail="Subscription is already paid")
+
+    original_amount = Decimal(str(subscription.amount))
+    coupon = None
+    final_amount = original_amount
+
+    if payload.coupon_code and payload.coupon_code.strip():
+        coupon = get_valid_coupon(
+            db,
+            payload.coupon_code,
+            original_amount,
+            user_id=current_user.id,
+            plan_id=subscription.plan_id,
         )
 
     payment = (
@@ -492,6 +524,11 @@ def create_checkout(
         .first()
     )
 
+    # Once a Moyasar payment ID is attached, its amount must not be changed.
+    # Create a fresh local payment for a changed checkout attempt.
+    if payment is not None and payment.provider_payment_id:
+        payment = None
+
     if payment is None:
         payment = Payment(
             user_id=current_user.id,
@@ -499,24 +536,44 @@ def create_checkout(
             plan_change_id=None,
             provider=PaymentProvider.MOYASAR.value,
             status=PaymentRecordStatus.PENDING.value,
-            amount=subscription.amount,
+            amount=original_amount,
             currency=settings.PAYMENT_CURRENCY.upper(),
             callback_url=settings.MOYASAR_CALLBACK_URL,
         )
-
         db.add(payment)
-        db.commit()
-        db.refresh(payment)
+        db.flush()
+    else:
+        payment.amount = original_amount
+        release_payment_coupon_application(db, payment.id)
+
+    if coupon is not None:
+        application = set_payment_coupon_application(
+            db,
+            payment=payment,
+            coupon=coupon,
+            original_amount=original_amount,
+        )
+        final_amount = Decimal(str(application.final_amount))
+    else:
+        final_amount = original_amount
+
+    payment.amount = final_amount
+    db.commit()
+    db.refresh(payment)
+
+    metadata = {
+        "local_payment_id": str(payment.id),
+        "subscription_id": str(subscription.id),
+        "user_id": str(current_user.id),
+        "payment_type": "subscription",
+    }
+    if coupon is not None:
+        metadata["coupon_code"] = coupon.code
 
     return build_checkout_response(
         payment=payment,
         description=f"NutrioMeals subscription #{subscription.id}",
-        metadata={
-            "local_payment_id": str(payment.id),
-            "subscription_id": str(subscription.id),
-            "user_id": str(current_user.id),
-            "payment_type": "subscription",
-        },
+        metadata=metadata,
     )
 
 

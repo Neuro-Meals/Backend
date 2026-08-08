@@ -23,6 +23,10 @@ from app.modules.users.models import User
 from app.modules.users.rbac_service import get_user_permissions
 from app.modules.users.schemas import UserCreate, UserResponse, VerifyEmailOTP
 from app.modules.users.service import create_user, get_user_by_email, get_user_by_phone
+from app.modules.referrals.service import (
+    record_registration_referral,
+    validate_referral_code_for_registration,
+)
 from fastapi import Request
 from app.core.rate_limiter import get_client_ip, hash_key, normalize_identifier, rate_limit
 
@@ -109,7 +113,22 @@ def register(payload: UserCreate, db: Session = Depends(get_db)):
         if existing_user:
             raise HTTPException(status_code=400, detail="Phone number already registered")
 
+        # Validate before creating the user so a bad referral code cannot leave
+        # behind a partially registered account.
+        referral_code = validate_referral_code_for_registration(
+            db,
+            payload.referral_code,
+        )
+
         user = create_user(db, payload)
+        record_registration_referral(
+            db,
+            referred_user=user,
+            referral_code=referral_code,
+        )
+        db.commit()
+        db.refresh(user)
+
         send_email_otp(user.email, user.email_otp, purpose="verification")
         return user
     except ValueError as e:
