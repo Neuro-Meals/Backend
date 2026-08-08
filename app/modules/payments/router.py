@@ -43,7 +43,7 @@ from app.modules.coupons.service import (
 )
 from app.modules.referrals.service import (
     mark_referral_reward_used_for_coupon,
-    qualify_referral_after_payment,
+    process_referral_earning_after_payment,
 )
 
 
@@ -429,7 +429,7 @@ def process_moyasar_payment(
                         db,
                         redemption.coupon_id,
                     )
-                qualify_referral_after_payment(db, payment)
+                process_referral_earning_after_payment(db, payment)
 
     elif remote_status == "failed":
         payment.status = PaymentRecordStatus.FAILED.value
